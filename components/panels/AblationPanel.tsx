@@ -23,7 +23,7 @@ export function AblationPanel({ engine, snap }: { engine: Engine; snap: Snapshot
   return (
     <Panel
       title="Why does DRISHTI work?"
-      provenance="Disable a component to see its contribution · toggles alter the estimator, not the display"
+      provenance="AI Speed is the SPEED MODEL (SIMULATED) · disable a component to see its contribution · toggles alter the estimator, not the display"
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
         {ITEMS.map((it) => {

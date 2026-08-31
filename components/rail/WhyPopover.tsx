@@ -96,7 +96,7 @@ export function WhyModePopover({ snap, onClose }: { snap: Snapshot; onClose: () 
         v={snap.shockActive ? 'SHOCK' : '✓'}
         color={snap.shockActive ? 'var(--warn)' : 'var(--ok)'}
       />
-      <Row k="Speed model confidence" v={`${(snap.speed.confidence * 100).toFixed(0)}%`} />
+      <Row k="Speed model (simulated) confidence" v={`${(snap.speed.confidence * 100).toFixed(0)}%`} />
       <Row k="Map hypotheses" v={String(snap.hypotheses.length)} />
       <Row
         k="Filter"

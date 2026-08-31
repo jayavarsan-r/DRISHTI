@@ -71,7 +71,7 @@ export function EvidenceSlideOver({ onClose }: { onClose: () => void }) {
           difference between them.
         </Section>
 
-        <Section title="The speed model is not trained">
+        <Section title="Speed model (simulated) — not trained">
           It is labelled SIMULATED everywhere it appears because it is a modelled
           stand-in for a temporal convolutional network that has not been trained. It
           does not return truth: its output carries correlated noise and a systematic
@@ -95,11 +95,11 @@ export function EvidenceSlideOver({ onClose }: { onClose: () => void }) {
         </Section>
 
         <Section title="What is not claimed">
-          No accuracy figure, no validation, no comparison against a published
-          benchmark, and no claim about performance on real hardware. The 10% figure
-          is labelled TARGET because it is the problem statement's threshold, not an
-          achieved result. The target runtime is Android on-device or edge C++; this
-          demonstration runs in a browser.
+          Nothing here is offered as a measured result, a comparison against a
+          published benchmark, or a claim about performance on real hardware. The 10%
+          figure is labelled TARGET because it is the problem statement's threshold,
+          not something this run demonstrates having met. The target runtime is
+          Android on-device or edge C++; this demonstration runs in a browser.
         </Section>
       </div>
     </div>

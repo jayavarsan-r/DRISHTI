@@ -505,8 +505,15 @@ things that are not physically moving.
 ## 7. Stack and offline requirement
 
 Next.js 15 App Router, TypeScript, Tailwind v4 with the palette as `@theme`
-tokens. `framer-motion` for state transitions only. No map library, no backend,
-no API keys. The road network is drawn as SVG from hard-coded coordinates.
+tokens. No map library, no backend, no API keys. The road network is drawn as
+SVG from hard-coded coordinates.
+
+`framer-motion` was specified for state transitions but is **not installed**.
+The only state transition needing animation is the one-shot header flash on
+entry to `DR_ACTIVE`, which is a single CSS keyframe driven by `navState` — it
+traces to a `lib/sim` variable exactly as the visual storytelling rule requires,
+and carries none of the library's weight. Dependencies are `next`, `react`,
+`react-dom`.
 
 **System font stacks only** (`-apple-system` / `ui-monospace`). `next/font/google`
 self-hosts but still fetches at build time; system stacks give SF Pro and SF
