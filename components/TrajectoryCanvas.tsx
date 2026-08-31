@@ -4,6 +4,12 @@ import { useRef } from 'react'
 import { ROAD_BOUNDS } from '@/lib/sim/road'
 import { useFrame, useSnapshot } from './useEngine'
 import { RoadLayer } from './canvas/RoadLayer'
+import { BlackoutZone } from './canvas/BlackoutZone'
+import { BlackoutClock } from './canvas/BlackoutClock'
+import { BaselineFailureBanner } from './canvas/BaselineFailureBanner'
+import { DecisionStrip } from './canvas/DecisionStrip'
+import { OffMapChip } from './canvas/OffMapChip'
+import { ErrorChart } from './canvas/ErrorChart'
 
 const PAD = 45
 
@@ -97,6 +103,9 @@ export function TrajectoryCanvas({ children }: { children?: React.ReactNode }) {
         <g transform="scale(1,-1)">
           <RoadLayer />
 
+          {/* 2 · road travelled since GNSS loss */}
+          <BlackoutZone snap={snap} />
+
           {/*
             3 · ground truth. Drawn slightly wider than the DRISHTI line above
             it so that when the two agree, truth reads as a green halo rather
@@ -180,6 +189,16 @@ export function TrajectoryCanvas({ children }: { children?: React.ReactNode }) {
       />
 
       <Legend />
+      <BlackoutClock snap={snap} />
+      <OffMapChip snap={snap} />
+      <BaselineFailureBanner snap={snap} />
+
+      {/* The 10% line is the ISRO metric, so the chart stays on the hero screen. */}
+      <div style={{ position: 'absolute', right: 12, bottom: 46 }}>
+        <ErrorChart snap={snap} width={220} height={120} inset />
+      </div>
+
+      <DecisionStrip snap={snap} />
       {children}
     </div>
   )
@@ -196,7 +215,8 @@ function Legend() {
       style={{
         position: 'absolute',
         left: 12,
-        bottom: 10,
+        // clears the 36px decision strip pinned to the bottom edge
+        bottom: 46,
         display: 'flex',
         flexDirection: 'column',
         gap: 4,
