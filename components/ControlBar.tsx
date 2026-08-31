@@ -47,12 +47,14 @@ export function ControlBar({
   uiMode,
   setUiMode,
   onNewRun,
+  onEvidence,
 }: {
   engine: Engine
   snap: Snapshot
   uiMode: UiMode
   setUiMode: (m: UiMode) => void
   onNewRun: () => void
+  onEvidence: () => void
 }) {
   return (
     <div
@@ -90,6 +92,9 @@ export function ControlBar({
 
       <span style={{ flex: 1 }} />
 
+      <Btn onClick={onEvidence} title="Methodology — how this works and what is not claimed">
+        Methodology
+      </Btn>
       <Btn
         active={uiMode === 'technical'}
         onClick={() => setUiMode(uiMode === 'technical' ? 'presentation' : 'technical')}

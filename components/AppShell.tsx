@@ -15,6 +15,10 @@ import { GnssIntegrityPanel } from './panels/GnssIntegrityPanel'
 import { MapHypothesesPanel } from './panels/MapHypothesesPanel'
 import { AblationPanel } from './panels/AblationPanel'
 import { ErrorChart } from './canvas/ErrorChart'
+import { EdgeEnginePanel } from './panels/EdgeEnginePanel'
+import { MissionCompleteCard } from './MissionCompleteCard'
+import { EvidenceSlideOver } from './EvidenceSlideOver'
+import { useKeyboard } from './useKeyboard'
 import { useEngine, useSnapshot } from './useEngine'
 
 export type UiMode = 'presentation' | 'technical'
@@ -23,6 +27,9 @@ export function AppShell() {
   const [uiMode, setUiMode] = useState<UiMode>('presentation')
   const [flashing, setFlashing] = useState(false)
   const [why, setWhy] = useState<null | 'mode' | 'rejected'>(null)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [evidence, setEvidence] = useState(false)
+  const [cardDismissed, setCardDismissed] = useState(false)
   const snap = useSnapshot()
   const engine = useEngine()
 
@@ -38,6 +45,24 @@ export function AppShell() {
     }
     prevState.current = snap.navState
   }, [snap.navState])
+
+  const toggleFullscreen = useCallback(() => {
+    const el = document.documentElement
+    if (!document.fullscreenElement) {
+      el.requestFullscreen?.().catch(() => {})
+      setFullscreen(true)
+    } else {
+      document.exitFullscreen?.().catch(() => {})
+      setFullscreen(false)
+    }
+  }, [])
+
+  useKeyboard({ engine, snap, setUiMode, toggleFullscreen })
+
+  // The mission card is dismissible, but must reappear for the next run.
+  useEffect(() => {
+    if (!snap.finished) setCardDismissed(false)
+  }, [snap.finished])
 
   const onNewRun = useCallback(() => {
     // A fresh seed must itself be reproducible to report, so derive it from the
@@ -63,7 +88,11 @@ export function AppShell() {
           padding: 12,
         }}
       >
-        <TrajectoryCanvas />
+        <TrajectoryCanvas>
+          {snap.finished && !cardDismissed && (
+            <MissionCompleteCard snap={snap} onClose={() => setCardDismissed(true)} />
+          )}
+        </TrajectoryCanvas>
         <aside
           style={{
             overflowY: 'auto',
@@ -78,6 +107,7 @@ export function AppShell() {
           <MetricRail
             snap={snap}
             uiMode={uiMode}
+            scale={fullscreen && uiMode === 'presentation' ? 1.4 : 1}
             whyMode={
               <button
                 onClick={() => setWhy(why === 'mode' ? null : 'mode')}
@@ -116,6 +146,7 @@ export function AppShell() {
                   <ErrorChart snap={snap} width={276} height={180} />
                 </div>
               </div>
+              <EdgeEnginePanel engine={engine} snap={snap} />
             </>
           )}
           {why === 'mode' && <WhyModePopover snap={snap} onClose={() => setWhy(null)} />}
@@ -129,8 +160,11 @@ export function AppShell() {
         uiMode={uiMode}
         setUiMode={setUiMode}
         onNewRun={onNewRun}
+        onEvidence={() => setEvidence(true)}
       />
       <Footer />
+
+      {evidence && <EvidenceSlideOver onClose={() => setEvidence(false)} />}
     </div>
   )
 }
