@@ -7,6 +7,8 @@ import { TimelineStrip } from './TimelineStrip'
 import { ControlBar } from './ControlBar'
 import { TrajectoryCanvas } from './TrajectoryCanvas'
 import { MetricRail } from './rail/MetricRail'
+import { EventLog } from './rail/EventLog'
+import { WhyModePopover, WhyRejectedPopover } from './rail/WhyPopover'
 import { useEngine, useSnapshot } from './useEngine'
 
 export type UiMode = 'presentation' | 'technical'
@@ -14,6 +16,7 @@ export type UiMode = 'presentation' | 'technical'
 export function AppShell() {
   const [uiMode, setUiMode] = useState<UiMode>('presentation')
   const [flashing, setFlashing] = useState(false)
+  const [why, setWhy] = useState<null | 'mode' | 'rejected'>(null)
   const snap = useSnapshot()
   const engine = useEngine()
 
@@ -53,8 +56,44 @@ export function AppShell() {
         }}
       >
         <TrajectoryCanvas />
-        <aside style={{ overflowY: 'auto', paddingRight: 2 }}>
-          <MetricRail snap={snap} uiMode={uiMode} />
+        <aside
+          style={{
+            overflowY: 'auto',
+            paddingRight: 2,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            position: 'relative',
+          }}
+        >
+          <MetricRail
+            snap={snap}
+            uiMode={uiMode}
+            whyMode={
+              <button
+                onClick={() => setWhy(why === 'mode' ? null : 'mode')}
+                title="Why is the filter in this mode?"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--border-hot)',
+                  borderRadius: 2,
+                  color: 'var(--accent)',
+                  fontSize: 9,
+                  padding: '0 5px',
+                  lineHeight: 1.6,
+                }}
+              >
+                ?
+              </button>
+            }
+          />
+          <EventLog
+            snap={snap}
+            uiMode={uiMode}
+            onWhyRejected={() => setWhy(why === 'rejected' ? null : 'rejected')}
+          />
+          {why === 'mode' && <WhyModePopover snap={snap} onClose={() => setWhy(null)} />}
+          {why === 'rejected' && <WhyRejectedPopover snap={snap} onClose={() => setWhy(null)} />}
         </aside>
       </main>
 
