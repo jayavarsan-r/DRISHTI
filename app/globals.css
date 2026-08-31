@@ -1,0 +1,126 @@
+@import 'tailwindcss';
+
+:root {
+  --bg-void: #05090f;
+  --bg-panel: #0b1420;
+  --bg-raised: #121e2e;
+  --border: #1e2e42;
+  --border-hot: #2b4a6b;
+
+  --text-hi: #e8f0f8;
+  --text-mid: #8fa3bc;
+  --text-lo: #56697f;
+
+  --truth: #22c55e;
+  --drishti: #38bdf8;
+  --naive: #f43f5e;
+  --accent: #22d3ee;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --ok: #22c55e;
+
+  --grid: #0e1a29;
+  --road: #16273b;
+  --road-center: #22344b;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-void);
+  color: var(--text-hi);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* All numerals are mono and tabular so values do not jitter as they update.
+   This is not cosmetic — jittering numbers read as fake. */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-mid);
+  font-weight: 500;
+}
+
+.panel-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: var(--text-hi);
+}
+
+/* Provenance captions — every metric panel carries one. */
+.provenance {
+  font-size: 9.5px;
+  color: var(--text-lo);
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+}
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 16px;
+}
+
+.panel-hot {
+  border-color: var(--border-hot);
+}
+
+button {
+  font-family: var(--font-ui);
+  color: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-void);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+@keyframes drishti-flash {
+  0%,
+  100% {
+    background: var(--bg-panel);
+  }
+  30% {
+    background: rgba(239, 68, 68, 0.35);
+  }
+}
+
+.flash-danger {
+  animation: drishti-flash 700ms ease-out 1;
+}
