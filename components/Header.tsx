@@ -28,6 +28,7 @@ function formatClock(t: number): string {
 export function Header({ t, rateHz, running, flashing }: HeaderProps) {
   return (
     <header
+      data-simclock={t.toFixed(2)}
       className={flashing ? 'flash-danger' : undefined}
       style={{
         flex: '0 0 auto',
