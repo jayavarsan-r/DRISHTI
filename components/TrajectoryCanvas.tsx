@@ -10,6 +10,7 @@ import { BaselineFailureBanner } from './canvas/BaselineFailureBanner'
 import { DecisionStrip } from './canvas/DecisionStrip'
 import { OffMapChip } from './canvas/OffMapChip'
 import { ErrorChart } from './canvas/ErrorChart'
+import { GhostHypotheses } from './canvas/GhostHypotheses'
 
 const PAD = 45
 
@@ -132,6 +133,9 @@ export function TrajectoryCanvas({ children }: { children?: React.ReactNode }) {
             vectorEffect="non-scaling-stroke"
             filter="url(#naiveGlow)"
           />
+
+          {/* 8 · ghost candidate roads while the match is ambiguous */}
+          <GhostHypotheses snap={snap} />
 
           {/* 5 · DRISHTI */}
           <polyline

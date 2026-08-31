@@ -9,6 +9,12 @@ import { TrajectoryCanvas } from './TrajectoryCanvas'
 import { MetricRail } from './rail/MetricRail'
 import { EventLog } from './rail/EventLog'
 import { WhyModePopover, WhyRejectedPopover } from './rail/WhyPopover'
+import { SpeedModelPanel } from './panels/SpeedModelPanel'
+import { UncertaintyPanel } from './panels/UncertaintyPanel'
+import { GnssIntegrityPanel } from './panels/GnssIntegrityPanel'
+import { MapHypothesesPanel } from './panels/MapHypothesesPanel'
+import { AblationPanel } from './panels/AblationPanel'
+import { ErrorChart } from './canvas/ErrorChart'
 import { useEngine, useSnapshot } from './useEngine'
 
 export type UiMode = 'presentation' | 'technical'
@@ -50,7 +56,9 @@ export function AppShell() {
           flex: 1,
           minHeight: 0,
           display: 'grid',
-          gridTemplateColumns: uiMode === 'presentation' ? '1fr 300px' : '1fr 360px',
+          // Technical mode shrinks the canvas to ~60% and gives the freed space
+          // to a two-column panel console.
+          gridTemplateColumns: uiMode === 'presentation' ? '1fr 300px' : '1fr 620px',
           gap: 12,
           padding: 12,
         }}
@@ -60,8 +68,9 @@ export function AppShell() {
           style={{
             overflowY: 'auto',
             paddingRight: 2,
-            display: 'flex',
-            flexDirection: 'column',
+            display: 'grid',
+            gridTemplateColumns: uiMode === 'technical' ? '1fr 1fr' : '1fr',
+            alignContent: 'start',
             gap: 12,
             position: 'relative',
           }}
@@ -92,6 +101,23 @@ export function AppShell() {
             uiMode={uiMode}
             onWhyRejected={() => setWhy(why === 'rejected' ? null : 'rejected')}
           />
+          {uiMode === 'technical' && (
+            <>
+              <AblationPanel engine={engine} snap={snap} />
+              <SpeedModelPanel snap={snap} />
+              <UncertaintyPanel snap={snap} />
+              <GnssIntegrityPanel snap={snap} />
+              <MapHypothesesPanel snap={snap} />
+              <div className="panel" style={{ padding: 12 }}>
+                <div className="panel-title" style={{ fontSize: 11 }}>
+                  Error chart
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <ErrorChart snap={snap} width={276} height={180} />
+                </div>
+              </div>
+            </>
+          )}
           {why === 'mode' && <WhyModePopover snap={snap} onClose={() => setWhy(null)} />}
           {why === 'rejected' && <WhyRejectedPopover snap={snap} onClose={() => setWhy(null)} />}
         </aside>
