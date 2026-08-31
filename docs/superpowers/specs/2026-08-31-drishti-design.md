@@ -233,6 +233,46 @@ That last constraint is the single most credible behaviour in the build. The
 uncertainty ellipse must visibly become a long thin cigar pointing down the
 road during blackout. This is verified by eye before the UI work proceeds.
 
+#### 4.4.1 Amendment — coherent vs. incoherent error growth
+
+**Implemented behaviour deviates from the literal equations above, because the
+literal equations cannot produce the behaviour this same section requires.**
+
+`sigma_along^2 += sigma_v^2 * dt^2` treats each timestep's speed error as
+independent. Accumulated as a random walk over a 30 s blackout at 100 Hz that
+yields roughly one centimetre of along-track uncertainty — the ellipse would
+*shrink* under map matching rather than grow, contradicting both the cigar
+requirement and the project's stated commitment to showing uncertainty
+"including when it grows".
+
+Two of the error sources are not white noise:
+
+- The speed model is AR(1) with rho = 0.9 at 100 Hz, so its error has a
+  correlation time tau = dt/(1-rho) = 0.1 s. Errors within a correlation time
+  do not average out.
+- The speed model carries a 2% systematic scale error, which is a bias, not
+  noise. It integrates coherently.
+
+Each axis therefore accumulates two contributions, combined in quadrature:
+
+```
+coherent    standard deviation grows linearly:  sigma += bias_rate * dt
+incoherent  variance grows linearly:            var   += 2 * sigma_v^2 * tau * dt
+```
+
+with `bias_rate = 0.02 * |v|` along-track (speed scale error) and
+`bias_rate = |v| * sigma_psi` cross-track (heading error integrating into
+lateral offset). Heading variance grows as `(gyro_noise^2 + bg_uncertainty^2) * dt`,
+the standard angle-random-walk form.
+
+Measured result over a 30 s blackout at 14 m/s with 1 Hz map matches:
+along-track 1.5 -> 9.3 m, cross-track held near 1.0 m, axis ratio ~8. The
+0.02 * 14 * 27.5 = 7.7 m dominant term is the speed scale error, as expected.
+
+The map-match constraint is unaffected: `collapseCrossTrack` still touches only
+the cross-track variance, and the test asserts exact equality of `sigmaAlong`
+across the call.
+
 ### 4.5 Map matching — top-K hypotheses
 
 ```
