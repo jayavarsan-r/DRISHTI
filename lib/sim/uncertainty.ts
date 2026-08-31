@@ -41,6 +41,9 @@ const SPEED_ERROR_TAU = 0.1
  */
 const SPEED_SCALE_UNCERTAINTY = 0.02
 
+/** Ceiling on inflation when the filter admits it is lost, metres. */
+const MAX_LOST_SIGMA = 250
+
 /** Scalar Kalman variance update against a measurement of stated accuracy. */
 function fuse(varPrior: number, varMeas: number): number {
   return (varPrior * varMeas) / (varPrior + varMeas)
@@ -111,6 +114,21 @@ export class UncertaintyTracker {
 
   inflateHeading(rad: number): void {
     this.varPsi += rad ** 2
+  }
+
+  /**
+   * Widen the position covariance after persistent innovation rejections.
+   *
+   * A filter that keeps rejecting fixes is asserting it knows better than the
+   * constellation. Past a few consecutive rejections that assertion is the less
+   * likely explanation, so the filter admits it is lost and reopens the gate.
+   */
+  inflateForLostFilter(): void {
+    // Capped: past this the filter is simply lost, and unbounded growth would
+    // make the reported uncertainty meaningless rather than merely large.
+    const cap = MAX_LOST_SIGMA ** 2
+    this.varAlong = Math.min(this.varAlong * 4, cap)
+    this.varCross = Math.min(this.varCross * 4, cap)
   }
 
   reset(): void {

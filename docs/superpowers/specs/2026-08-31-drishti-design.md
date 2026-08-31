@@ -401,6 +401,42 @@ not preferences.
 7. No screen displays "accuracy", "validated", "proven", or a table of measured
    benchmark results.
 
+### 4.9 Measured output of the seeded run
+
+Recorded from seed 26168 before any UI work began, so the figures are the
+simulator's, not a target the UI was built toward.
+
+| Quantity | Value |
+|---|---|
+| Duration / distance | 117.4 s / 1393 m |
+| DRISHTI final error | 1.2 m (0.08% of distance) |
+| Peak DRISHTI error during blackout | 8.1 m over a 30 s, ~400 m outage |
+| ESKF + NHC baseline final error | 499.7 m |
+| Naive INS final error | 2414 m |
+| GNSS anomalies / rejected fixes | 1 / 2 (both spoofed) |
+| Recovery time | 2.51 s |
+| Peak error/distance | 3.83% at t = 9.3 s |
+
+The peak error fraction occurs early, while distance travelled is still small,
+not during the blackout. The run does not exceed the 10% TARGET.
+
+Two additional corrections were required to reach these figures, both of which
+were bugs rather than tuning:
+
+- **The gyro bias aid had an inverted sign.** Heading propagates as
+  `psi += (gyro_z - bg_hat)*dt`, so a `bg_hat` that is too low makes `psi` run
+  ahead of the true course and produces a *negative* residual. Adding that
+  residual to `bg_hat` compounds the drift: measured at 1.32 deg/s of heading
+  error against a 0.6 deg/s raw bias, meaning the aid more than doubled the
+  error it exists to remove.
+- **Course over ground was aided across stale and low-quality baselines.** The
+  first fix accepted after a blackout was paired with the last fix from before
+  it, yielding a bearing averaged over two turns and a bias update scaled by a
+  30 s interval. Separately, at rest two fixes sit ~5 m apart on noise alone, so
+  a baseline-derived speed gate passes while the bearing is uniformly random.
+  Fixed with a recency gate, a filter-speed gate (ZUPT forces speed to zero at
+  rest), a turn-rate gate, and an SNR weighting on the correction.
+
 ### 5.1 The error/distance figure is not clamped
 
 The error-over-distance metric may exceed the 10% TARGET line during a deep

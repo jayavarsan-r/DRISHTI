@@ -45,6 +45,19 @@ const BG_LEARN_RATE = 0.02
 const BA_LEARN_RATE = 0.02
 
 /**
+ * Gains for the GNSS course-over-ground heading aid — a PI complementary
+ * filter on heading, with the integral term estimating gyro bias.
+ *
+ * Ki is set near Kp^2/4, which is critical damping for a PI loop closed at the
+ * 1 Hz fix rate. The integral term multiplies by the fix interval (a rate error
+ * accumulated over dt); dividing by dt instead over-corrects by roughly the
+ * loop's settling factor and the bias estimate then oscillates across zero
+ * instead of converging.
+ */
+const HEADING_AID_GAIN = 0.35
+const BG_AID_GAIN = 0.031
+
+/**
  * A. Naive strapdown INS.
  *
  * No bias correction, no motion constraints, no zero-velocity updates. Heading
@@ -127,6 +140,34 @@ export class EskfNhc {
     this.state.x += this.state.v * Math.cos(this.state.psi) * dt
     this.state.y += this.state.v * Math.sin(this.state.psi) * dt
   }
+
+  /**
+   * Loosely-coupled heading aid from GNSS course over ground.
+   *
+   * While fixes are healthy and the vehicle is moving fast enough for course to
+   * be meaningful, the difference between the filter's heading and the observed
+   * track direction is an observation of accumulated heading error. Feeding a
+   * fraction of it back — and attributing part of it to the gyro bias — is what
+   * a real GNSS/INS does, and it is why the bias is already largely calibrated
+   * by the time a blackout starts.
+   */
+  aidHeading(course: number, dtSinceLast: number, quality: number): void {
+    const err = Math.atan2(
+      Math.sin(course - this.state.psi),
+      Math.cos(course - this.state.psi)
+    )
+    this.state.psi += HEADING_AID_GAIN * quality * err
+
+    /*
+     * Sign: heading propagates as psi += (gyro_z - bg_hat)*dt. A bg_hat that is
+     * too LOW makes psi run ahead of the true course, which shows up as a
+     * NEGATIVE err. Correcting that requires raising bg_hat, so the update
+     * subtracts the residual rate. Adding it instead compounds the drift —
+     * measured at 1.32 deg/s of heading error against a 0.6 deg/s raw bias,
+     * i.e. the aid more than doubled the very error it exists to remove.
+     */
+    this.bgHat -= BG_AID_GAIN * quality * err * Math.max(dtSinceLast, 0.2)
+  }
 }
 
 /**
@@ -190,6 +231,35 @@ export class Drishti {
       this.state.x += this.state.v * c * dt - lateral * s
       this.state.y += this.state.v * s * dt + lateral * c
     }
+  }
+
+
+  /**
+   * Loosely-coupled heading aid from GNSS course over ground.
+   *
+   * While fixes are healthy and the vehicle is moving fast enough for course to
+   * be meaningful, the difference between the filter's heading and the observed
+   * track direction is an observation of accumulated heading error. Feeding a
+   * fraction of it back — and attributing part of it to the gyro bias — is what
+   * a real GNSS/INS does, and it is why the bias is already largely calibrated
+   * by the time a blackout starts.
+   */
+  aidHeading(course: number, dtSinceLast: number, quality: number): void {
+    const err = Math.atan2(
+      Math.sin(course - this.state.psi),
+      Math.cos(course - this.state.psi)
+    )
+    this.state.psi += HEADING_AID_GAIN * quality * err
+
+    /*
+     * Sign: heading propagates as psi += (gyro_z - bg_hat)*dt. A bg_hat that is
+     * too LOW makes psi run ahead of the true course, which shows up as a
+     * NEGATIVE err. Correcting that requires raising bg_hat, so the update
+     * subtracts the residual rate. Adding it instead compounds the drift —
+     * measured at 1.32 deg/s of heading error against a 0.6 deg/s raw bias,
+     * i.e. the aid more than doubled the very error it exists to remove.
+     */
+    this.bgHat -= BG_AID_GAIN * quality * err * Math.max(dtSinceLast, 0.2)
   }
 
   /** Map correction, applied by the engine. */

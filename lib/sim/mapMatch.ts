@@ -44,6 +44,25 @@ const MAX_PULL = 0.35
 /** Assumed accuracy of the road geometry itself, m. */
 const MAP_SIGMA = 1.5
 
+/**
+ * Candidate validation gate, metres.
+ *
+ * A road this far from the estimate is not a candidate no matter how large the
+ * filter's covariance has grown. Without this gate, a large sigma_cross flattens
+ * the distance kernel to ~1 for every segment, scoring collapses to heading
+ * agreement alone, and the matcher will happily select a parallel road hundreds
+ * of metres away and drag the estimate onto it. This is the map-domain
+ * equivalent of the chi-square gate on GNSS.
+ */
+const MAX_CANDIDATE_DIST = 60
+
+/**
+ * The distance kernel's sigma is clamped so it always retains discriminating
+ * power between nearby roads, even when the filter is very uncertain.
+ */
+const KERNEL_SIGMA_MIN = 1.0
+const KERNEL_SIGMA_MAX = 25
+
 interface Projection {
   point: Vec2
   dist: number
@@ -85,8 +104,7 @@ export function findHypotheses(
   sigmaCross: number,
   prevWinnerId: string | null
 ): Hypothesis[] {
-  // Guard against a degenerate sigma collapsing the gaussian to a delta.
-  const sigma = Math.max(sigmaCross, 0.5)
+  const sigma = Math.max(KERNEL_SIGMA_MIN, Math.min(sigmaCross, KERNEL_SIGMA_MAX))
 
   const scored = SEGMENTS.map((seg) => {
     const proj = projectToSegment(seg, pos)
@@ -112,8 +130,12 @@ export function findHypotheses(
     }
   })
 
-  scored.sort((a, b) => b.score - a.score)
-  const top = scored.slice(0, K)
+  // Validation gate: discard implausibly distant candidates outright.
+  const gated = scored.filter((h) => h.perpDist <= MAX_CANDIDATE_DIST)
+  if (gated.length === 0) return []
+
+  gated.sort((a, b) => b.score - a.score)
+  const top = gated.slice(0, K)
 
   const total = top.reduce((a, h) => a + h.score, 0)
   if (total > 0) for (const h of top) h.p = h.score / total
