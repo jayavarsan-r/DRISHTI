@@ -1,60 +1,70 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Header } from './Header'
 import { Footer } from './Footer'
+import { TimelineStrip } from './TimelineStrip'
+import { ControlBar } from './ControlBar'
 import { TrajectoryCanvas } from './TrajectoryCanvas'
+import { MetricRail } from './rail/MetricRail'
 import { useEngine, useSnapshot } from './useEngine'
 
 export type UiMode = 'presentation' | 'technical'
 
 export function AppShell() {
-  const [uiMode] = useState<UiMode>('presentation')
+  const [uiMode, setUiMode] = useState<UiMode>('presentation')
+  const [flashing, setFlashing] = useState(false)
   const snap = useSnapshot()
   const engine = useEngine()
 
+  // Header flashes once on entry to DR_ACTIVE. Latched on the transition so a
+  // re-render cannot retrigger it.
+  const prevState = useRef(snap.navState)
+  useEffect(() => {
+    if (prevState.current !== 'DR_ACTIVE' && snap.navState === 'DR_ACTIVE') {
+      setFlashing(true)
+      const id = setTimeout(() => setFlashing(false), 700)
+      prevState.current = snap.navState
+      return () => clearTimeout(id)
+    }
+    prevState.current = snap.navState
+  }, [snap.navState])
+
+  const onNewRun = useCallback(() => {
+    // A fresh seed must itself be reproducible to report, so derive it from the
+    // clock once and show it rather than reseeding invisibly.
+    engine.reset(Math.floor(Date.now() % 2147483647))
+    engine.runJudgeDemo()
+  }, [engine])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <Header t={snap.t} rateHz={snap.rateHz} running={snap.running} flashing={false} />
+      <Header t={snap.t} rateHz={snap.rateHz} running={snap.running} flashing={flashing} />
+      <TimelineStrip snap={snap} />
 
       <main
         style={{
           flex: 1,
           minHeight: 0,
           display: 'grid',
-          gridTemplateColumns: uiMode === 'presentation' ? '1fr 280px' : '1fr 340px',
+          gridTemplateColumns: uiMode === 'presentation' ? '1fr 300px' : '1fr 360px',
           gap: 12,
           padding: 12,
         }}
       >
         <TrajectoryCanvas />
-        <aside className="panel" style={{ overflow: 'hidden' }}>
-          <div className="panel-title">Metric rail — Task 13</div>
-          <div className="mono" style={{ marginTop: 12, fontSize: 12, lineHeight: 1.9 }}>
-            <div>state {snap.navState}</div>
-            <div>err {snap.drishtiError.toFixed(1)} m</div>
-            <div>naive {snap.naiveError.toFixed(0)} m</div>
-            <div>dist {snap.distance.toFixed(0)} m</div>
-          </div>
-          <button
-            onClick={() => engine.runJudgeDemo()}
-            style={{
-              marginTop: 16,
-              width: '100%',
-              padding: '10px 0',
-              background: 'var(--bg-raised)',
-              border: '1px solid var(--border-hot)',
-              borderRadius: 3,
-              color: 'var(--accent)',
-              letterSpacing: '0.1em',
-              fontSize: 11,
-            }}
-          >
-            ▶ RUN JUDGE DEMO
-          </button>
+        <aside style={{ overflowY: 'auto', paddingRight: 2 }}>
+          <MetricRail snap={snap} uiMode={uiMode} />
         </aside>
       </main>
 
+      <ControlBar
+        engine={engine}
+        snap={snap}
+        uiMode={uiMode}
+        setUiMode={setUiMode}
+        onNewRun={onNewRun}
+      />
       <Footer />
     </div>
   )

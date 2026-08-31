@@ -85,13 +85,6 @@ export function TrajectoryCanvas({ children }: { children?: React.ReactNode }) {
         style={{ width: '100%', height: '100%', display: 'block' }}
       >
         <defs>
-          <radialGradient id="vignette" cx="50%" cy="50%" r="72%">
-            <stop offset="62%" stopColor="rgba(0,0,0,0)" />
-            <stop
-              offset="100%"
-              stopColor={denied ? 'rgba(130,22,22,0.30)' : 'rgba(0,0,0,0.28)'}
-            />
-          </radialGradient>
           <filter id="naiveGlow" x="-40%" y="-40%" width="180%" height="180%">
             <feGaussianBlur stdDeviation="2.2" result="b" />
             <feMerge>
@@ -167,15 +160,24 @@ export function TrajectoryCanvas({ children }: { children?: React.ReactNode }) {
           </g>
         </g>
 
-        <rect
-          x={VIEW.x}
-          y={VIEW.y}
-          width={VIEW.w}
-          height={VIEW.h}
-          fill="url(#vignette)"
-          pointerEvents="none"
-        />
       </svg>
+
+      {/*
+        Vignette as a CSS overlay rather than an SVG rect: preserveAspectRatio
+        letterboxes the viewBox, so a rect in user space covers only the content
+        box and reads as hard-edged bands against the panel.
+      */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          background: denied
+            ? 'radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(130,22,22,0.34) 100%)'
+            : 'radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,0.32) 100%)',
+          transition: 'background 500ms ease',
+        }}
+      />
 
       <Legend />
       {children}
