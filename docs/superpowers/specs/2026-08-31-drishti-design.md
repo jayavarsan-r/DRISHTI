@@ -281,9 +281,28 @@ score = w1*exp(-perpDist^2/(2*sigma_cross^2)) + w2*cos(headingDiff)
 ```
 
 Scores normalise to probabilities over K=3 candidates. **The estimate never
-snaps to the winner.** Correction is applied proportional to `p_winner` and
-inversely to `sigma_cross`, so a low-confidence match barely moves the
-estimate. The full candidate list is exposed to the UI.
+snaps to the winner.** Correction is applied proportional to `p_winner`, so a
+low-confidence match barely moves the estimate. The full candidate list is
+exposed to the UI.
+
+#### 4.5.1 Amendment — direction of the sigma_cross term
+
+The original brief specified the correction as scaling *inversely* to
+`sigma_cross`. That is backwards as filtering: the Kalman gain is
+`P / (P + R)`, so a filter with large position uncertainty should weight the
+map measurement **more**, not less. Scaling inversely would mean the more lost
+the vehicle is, the less it uses the road — the opposite of the behaviour the
+demonstration is claiming.
+
+Implemented: `gain = MAX_PULL * p_winner * (varCross / (varCross + varMap))`,
+with `MAX_PULL = 0.35` strictly below 1 so the estimate approaches the road
+asymptotically rather than being teleported onto it.
+
+The brief's stated *intent* — "a low-confidence match barely moves the
+estimate" — is preserved and tested, and is governed by `p_winner`. Measured at
+a fixed sigma: an unambiguous location scores `p_winner = 0.50` and yields a
+1.36 m correction; beside the parallel service road the same offset scores
+`p_winner = 0.42` with a 0.37 runner-up and yields 1.14 m.
 
 ### 4.6 GNSS and integrity
 
