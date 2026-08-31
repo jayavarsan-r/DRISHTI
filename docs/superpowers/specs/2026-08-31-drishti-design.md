@@ -203,6 +203,29 @@ rather than integration, plus NHC + ZUPT + map correction.
 This difference is the entire thesis: **speed is estimated per window, not
 integrated, so its error stays bounded instead of accumulating.**
 
+#### 4.2.1 Amendment — ZUPT bias learner must converge
+
+The brief writes the zero-velocity bias update as `bg_hat += 0.02*gyro_z`.
+That form integrates the raw measurement and has no fixed point: across the
+400 samples of the 4 s stop it drives the estimate to roughly eight times the
+true bias, after which heading drifts the opposite way and the result is worse
+than applying no correction at all.
+
+Implemented as a first-order convergence onto the residual:
+
+```
+bg_hat += k * (gyro_z - bg_hat)
+ba_hat += k * (accel_x - ba_hat)
+```
+
+which has the true bias as its fixed point. Same gain, k = 0.02.
+
+Measured open-loop over the full 117 s route with no GNSS and no map
+correction: naive INS 2353 m, ESKF+NHC baseline 815 m, DRISHTI 418 m. Heading
+error plateaus near 35.8 degrees after the stop, which is correct — a ZUPT
+corrects the bias going forward but cannot undo heading error already
+accumulated.
+
 ### 4.3 Speed model
 
 Models what a trained 1-D CNN would realistically produce. It does **not**
