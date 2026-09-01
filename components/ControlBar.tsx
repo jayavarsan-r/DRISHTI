@@ -82,9 +82,9 @@ export function ControlBar({
       <Btn onClick={() => engine.reset()} title="Re-seeds to the default seed">
         Reset
       </Btn>
-      <Btn onClick={onNewRun} title="Generates a fresh seed">
+      {/* <Btn onClick={onNewRun} title="Generates a fresh seed">
         New run
-      </Btn>
+      </Btn> */}
 
       <span className="mono provenance" style={{ fontSize: 10 }}>
         SEED {snap.seed}
