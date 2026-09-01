@@ -11,6 +11,17 @@ function walk(dir: string): string[] {
 
 const src = () => [...walk('app'), ...walk('components')].filter((f) => /\.tsx?$/.test(f))
 
+/**
+ * The field link is a deliberate, LAN-only WebSocket to a phone. The
+ * no-network rule exists to prove the demonstration carries no INTERNET
+ * dependency and runs on an isolated network — which is still true — so the
+ * link layer is exempt from the socket ban but not from the external-host ban.
+ */
+const isLinkLayer = (f: string) =>
+  f.includes('/link/') || f.includes('/field/') || f.endsWith('FieldUnit.tsx')
+
+const simUi = () => src().filter((f) => !isLinkLayer(f))
+
 /** Comments discuss these words legitimately; only rendered copy is audited. */
 function stripComments(s: string): string {
   return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
@@ -37,13 +48,37 @@ describe('acceptance', () => {
     }
   })
 
-  it('makes no network calls and loads no remote fonts or assets', () => {
-    for (const f of src()) {
+  it('the simulation UI makes no network calls at all', () => {
+    for (const f of simUi()) {
       const t = stripComments(readFileSync(f, 'utf8'))
       expect(t, f).not.toMatch(/\bfetch\s*\(/)
       expect(t, f).not.toMatch(/new WebSocket/)
+    }
+  })
+
+  it('nothing anywhere loads a remote font or external host', () => {
+    for (const f of src()) {
+      const t = stripComments(readFileSync(f, 'utf8'))
       expect(t, f).not.toMatch(/next\/font\/google/)
       expect(t, f).not.toMatch(/https?:\/\/(?!www\.w3\.org)/)
+    }
+  })
+
+  it('the field link derives its address from the page origin, never a hardcoded host', () => {
+    const link = readFileSync('lib/link/useLink.ts', 'utf8')
+    expect(link).toContain('window.location.host')
+    // no literal IPs or ws:// hosts baked in
+    expect(stripComments(link)).not.toMatch(/wss?:\/\/[0-9a-z]/i)
+  })
+
+  it('phone orientation never reaches the estimator', () => {
+    // The field unit is a sensor node and a remote control, not the vehicle.
+    // Its orientation may drive visualisation only.
+    const mission = readFileSync('lib/link/useMissionLink.ts', 'utf8')
+    expect(mission).not.toMatch(/aidHeading|applyDelta|blendTo|\.state\.psi\s*=/)
+    for (const f of readdirSync('lib/sim')) {
+      const t = readFileSync(join('lib/sim', f), 'utf8')
+      expect(t, `lib/sim/${f} must not import the link layer`).not.toMatch(/lib\/link|\.\.\/link/)
     }
   })
 

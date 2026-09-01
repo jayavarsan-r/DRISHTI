@@ -8,6 +8,15 @@
  *               RESULTS PENDING — DATASET INGESTION.
  */
 
+export interface FieldLinkBadge {
+  connected: boolean
+  state: string
+  /** measured on the phone; null when no sensor events are arriving */
+  sensorHz: number | null
+  /** true round-trip time, null until a heartbeat completes */
+  latencyMs: number | null
+}
+
 export interface HeaderProps {
   /** Simulation time in seconds. */
   t: number
@@ -17,6 +26,8 @@ export interface HeaderProps {
   running: boolean
   /** Flashes once on entry to DR_ACTIVE. */
   flashing: boolean
+  /** Real hardware link status. Separate from the simulation badge beside it. */
+  fieldLink: FieldLinkBadge
 }
 
 function formatClock(t: number): string {
@@ -25,7 +36,7 @@ function formatClock(t: number): string {
   return `T+${String(m).padStart(2, '0')}:${s.toFixed(1).padStart(4, '0')}`
 }
 
-export function Header({ t, rateHz, running, flashing }: HeaderProps) {
+export function Header({ t, rateHz, running, flashing, fieldLink }: HeaderProps) {
   return (
     <header
       data-simclock={t.toFixed(2)}
@@ -111,6 +122,39 @@ export function Header({ t, rateHz, running, flashing }: HeaderProps) {
           <span style={{ fontSize: 9 }}>●</span>
           {rateHz.toFixed(1)} Hz
         </span>
+      </div>
+
+      {/*
+        FIELD LINK — real hardware. Deliberately placed beside the RUNTIME block
+        so the contrast between what is real and what is simulated is a single
+        glance rather than a caption to be hunted for.
+      */}
+      <div
+        style={{
+          borderLeft: '1px solid var(--border)',
+          paddingLeft: 14,
+          minWidth: 132,
+          lineHeight: 1.25,
+        }}
+      >
+        <div className="label" style={{ fontSize: 8.5, color: 'var(--text-lo)' }}>
+          Field link
+        </div>
+        <div
+          className="mono"
+          style={{
+            fontSize: 10.5,
+            color: fieldLink.connected ? 'var(--ok)' : 'var(--text-lo)',
+            letterSpacing: '0.03em',
+          }}
+        >
+          ● {fieldLink.connected ? 'REAL SENSOR' : fieldLink.state}
+        </div>
+        <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-lo)', marginTop: 2 }}>
+          {fieldLink.sensorHz !== null ? `${fieldLink.sensorHz.toFixed(0)} Hz` : '— Hz'}
+          {'  '}
+          {fieldLink.latencyMs !== null ? `${fieldLink.latencyMs} ms` : '— ms'}
+        </div>
       </div>
 
       {/* RUNTIME provenance — constraint 1, never hidden */}

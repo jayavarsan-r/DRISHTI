@@ -33,7 +33,14 @@ const VIEW = {
  * (y up) survives contact with SVG (y down). Text inside that group is
  * counter-flipped where it appears.
  */
-export function TrajectoryCanvas({ children }: { children?: React.ReactNode }) {
+export function TrajectoryCanvas({
+  children,
+  overlay,
+}: {
+  children?: React.ReactNode
+  /** Rendered above the scene; used for the field-orientation instrument. */
+  overlay?: React.ReactNode
+}) {
   const truthRef = useRef<SVGPolylineElement>(null)
   const naiveRef = useRef<SVGPolylineElement>(null)
   const drishtiRef = useRef<SVGPolylineElement>(null)
@@ -193,6 +200,7 @@ export function TrajectoryCanvas({ children }: { children?: React.ReactNode }) {
       />
 
       <Legend />
+      {overlay}
       <BlackoutClock snap={snap} />
       <OffMapChip snap={snap} />
       <BaselineFailureBanner snap={snap} />

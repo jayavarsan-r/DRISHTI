@@ -23,6 +23,56 @@ npm run build && npm start
 Runs entirely offline after load — no `fetch`, no CDN, no map tiles, no fonts
 fetched at runtime. Verified with all non-localhost requests blocked.
 
+The optional field link adds a **LAN-only** WebSocket to a phone. Still no
+internet dependency; see below.
+
+## Field unit — phone as a live sensor node
+
+The phone becomes a real telemetry node and remote control; the laptop stays
+Mission Control. **The phone's sensors are real. The navigation scenario they
+trigger is simulated.** Both sides label this everywhere.
+
+### It must be https. This is not optional.
+
+`DeviceMotionEvent` and `DeviceOrientationEvent` are **secure-context only** in
+Android Chrome and iOS Safari. A phone opening `http://<lan-ip>/field` receives
+**no sensor events at all, silently** — no error, just zeros. `http://localhost`
+would be a secure context, but the phone cannot reach the laptop that way.
+
+```bash
+npm run cert     # self-signed cert covering this machine's LAN address
+npm run link     # Next + WebSocket relay on ONE port
+```
+
+The console prints the exact phone URL. On the phone, open it, tap **Advanced →
+Proceed** past the certificate warning (that grants the secure context), then
+**Enable sensor access**.
+
+If a certificate is impractical, allow the origin in Android Chrome under
+`chrome://flags/#unsafely-treat-insecure-origin-as-secure` instead.
+
+`/field` detects all of this at runtime and tells you which case you are in
+rather than showing zeros that look like readings.
+
+### Port
+
+Defaults to 3000; override with `PORT`. (Docker often holds 3000 — `PORT=3443
+npm run link` works.)
+
+### What is real on the link
+
+Real: the WebSocket, phone accelerometer/gyroscope/orientation, measured sample
+rate, packet counts, round-trip latency from a heartbeat echo, and every button
+press. Simulated: everything downstream — trajectory, GNSS, dead reckoning, map
+matching, integrity.
+
+**Phone orientation drives a visualisation only.** It never reaches the
+estimator, and the simulated vehicle's heading is unaffected by it. There is a
+test that fails the build if that ever changes.
+
+Note that a run driven by phone commands is no longer the seeded judge demo —
+pressing RESET returns to seed 26168.
+
 ## Use it
 
 Press **RUN JUDGE DEMO**. The scripted scenario runs ~117 s:
@@ -68,8 +118,10 @@ the speed model is the only difference between them.
 npm test
 ```
 
-67 tests over `lib/sim` plus an acceptance audit that fails the build if the UI
-ever claims accuracy, validation, or a measured result.
+70 tests over `lib/sim` plus an acceptance audit that fails the build if the UI
+ever claims accuracy, validation, or a measured result, if the link layer ever
+hardcodes a host instead of deriving it from the page origin, or if phone
+orientation ever reaches the estimator.
 
 ## Docs
 

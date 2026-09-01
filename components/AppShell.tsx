@@ -19,6 +19,10 @@ import { EdgeEnginePanel } from './panels/EdgeEnginePanel'
 import { MissionCompleteCard } from './MissionCompleteCard'
 import { EvidenceSlideOver } from './EvidenceSlideOver'
 import { useKeyboard } from './useKeyboard'
+import { useMissionLink } from '@/lib/link/useMissionLink'
+import { FieldUnitPanel } from './link/FieldUnitPanel'
+import { PairingCard } from './link/PairingCard'
+import { FieldOrientationOverlay } from './link/FieldOrientationOverlay'
 import { useEngine, useSnapshot } from './useEngine'
 
 export type UiMode = 'presentation' | 'technical'
@@ -64,6 +68,10 @@ export function AppShell() {
     if (!snap.finished) setCardDismissed(false)
   }, [snap.finished])
 
+  // Field link. Commands from the phone are dispatched into this same engine —
+  // no second simulation exists.
+  const { stats: linkStats, telemetry, orientationRef } = useMissionLink({ engine, snap })
+
   const onNewRun = useCallback(() => {
     // A fresh seed must itself be reproducible to report, so derive it from the
     // clock once and show it rather than reseeding invisibly.
@@ -72,8 +80,19 @@ export function AppShell() {
   }, [engine])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <Header t={snap.t} rateHz={snap.rateHz} running={snap.running} flashing={flashing} />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      <Header
+        t={snap.t}
+        rateHz={snap.rateHz}
+        running={snap.running}
+        flashing={flashing}
+        fieldLink={{
+          connected: linkStats.peerConnected,
+          state: linkStats.state,
+          sensorHz: telemetry?.sensorsLive ? telemetry.sensorHz : null,
+          latencyMs: linkStats.latencyMs,
+        }}
+      />
       <TimelineStrip snap={snap} />
 
       <main
@@ -88,7 +107,15 @@ export function AppShell() {
           padding: 12,
         }}
       >
-        <TrajectoryCanvas>
+        <TrajectoryCanvas
+          overlay={
+            <FieldOrientationOverlay
+              orientationRef={orientationRef}
+              live={telemetry?.sensorsLive ?? false}
+              connected={linkStats.peerConnected}
+            />
+          }
+        >
           {snap.finished && !cardDismissed && (
             <MissionCompleteCard snap={snap} onClose={() => setCardDismissed(true)} />
           )}
@@ -131,8 +158,14 @@ export function AppShell() {
             uiMode={uiMode}
             onWhyRejected={() => setWhy(why === 'rejected' ? null : 'rejected')}
           />
+          {!linkStats.peerConnected && <PairingCard />}
           {uiMode === 'technical' && (
             <>
+              <FieldUnitPanel
+                stats={linkStats}
+                telemetry={telemetry}
+                orientationRef={orientationRef}
+              />
               <AblationPanel engine={engine} snap={snap} />
               <SpeedModelPanel snap={snap} />
               <UncertaintyPanel snap={snap} />
