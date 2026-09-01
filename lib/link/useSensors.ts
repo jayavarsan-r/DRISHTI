@@ -18,6 +18,25 @@ export interface SensorStatus {
 }
 
 /**
+ * Everything needed to work out why sensors are or are not delivering, shown
+ * on the phone itself. Diagnosing this remotely is otherwise guesswork: the
+ * failure is silent and looks identical to a dead button.
+ */
+export interface SensorDiagnostics {
+  protocol: string
+  host: string
+  isSecureContext: boolean | null
+  hasDeviceMotion: boolean
+  hasDeviceOrientation: boolean
+  needsPermissionCall: boolean
+  /** raw count of events seen since load, regardless of permission state */
+  motionEvents: number
+  orientationEvents: number
+  /** what the last enable() attempt actually did */
+  lastAction: string
+}
+
+/**
  * iOS 13+ gates these behind an explicit user-gesture permission call. Android
  * Chrome does not, but BOTH require a secure context: over plain http on a LAN
  * address no events are delivered at all, silently. That is the single most
@@ -43,6 +62,20 @@ export function useSensors() {
     orientationSupported: false,
     reason: null,
   })
+
+  const [diag, setDiag] = useState<SensorDiagnostics>({
+    protocol: '',
+    host: '',
+    isSecureContext: null,
+    hasDeviceMotion: false,
+    hasDeviceOrientation: false,
+    needsPermissionCall: false,
+    motionEvents: 0,
+    orientationEvents: 0,
+    lastAction: 'not attempted',
+  })
+
+  const rawCounts = useRef({ motion: 0, orientation: 0 })
 
   /** Latest sample, written on every event. Never triggers a render. */
   const latest = useRef<SensorSample>({
@@ -81,6 +114,7 @@ export function useSensors() {
 
   const attach = useCallback(() => {
     const onMotion = (e: DeviceMotionEvent) => {
+      rawCounts.current.motion++
       const a = e.accelerationIncludingGravity ?? e.acceleration
       const r = e.rotationRate
       push({
@@ -93,6 +127,7 @@ export function useSensors() {
     }
 
     const onOrientation = (e: DeviceOrientationEvent) => {
+      rawCounts.current.orientation++
       latest.current = {
         ...latest.current,
         orientation: { alpha: e.alpha ?? 0, beta: e.beta ?? 0, gamma: e.gamma ?? 0 },
@@ -112,13 +147,21 @@ export function useSensors() {
   const enable = useCallback(async () => {
     if (typeof window === 'undefined') return
 
-    if (!window.isSecureContext) {
+    setDiag((d) => ({ ...d, lastAction: 'tapped — checking' }))
+
+    /*
+     * A non-secure context is reported, NOT treated as fatal: if the browser is
+     * already delivering events (some do), refusing to continue would disable a
+     * working sensor stream over a technicality.
+     */
+    if (!window.isSecureContext && rawCounts.current.motion === 0) {
       setStatus((s) => ({
         ...s,
         permission: 'insecure',
         reason:
-          'Motion sensors require a secure context. This page was opened over plain http, so the browser will not deliver any sensor events.',
+          'This page is not a secure context and no motion events have arrived. Browsers only deliver motion sensors over https with a trusted certificate, or to an origin explicitly allowlisted in chrome://flags.',
       }))
+      setDiag((d) => ({ ...d, lastAction: 'blocked: insecure context, 0 events seen' }))
       return
     }
 
@@ -147,6 +190,7 @@ export function useSensors() {
             permission: 'denied',
             reason: 'Motion access was denied. Grant it in browser settings and retry.',
           }))
+          setDiag((d) => ({ ...d, lastAction: `requestPermission returned "${res}"` }))
           return
         }
         const anyOrient = DeviceOrientationEvent as unknown as {
@@ -155,12 +199,13 @@ export function useSensors() {
         if (typeof anyOrient.requestPermission === 'function') {
           await anyOrient.requestPermission().catch(() => undefined)
         }
-      } catch {
+      } catch (err) {
         setStatus((s) => ({
           ...s,
           permission: 'denied',
           reason: 'The permission request failed. It must be triggered by a tap.',
         }))
+        setDiag((d) => ({ ...d, lastAction: `requestPermission threw: ${String(err)}` }))
         return
       }
     }
@@ -174,6 +219,7 @@ export function useSensors() {
       orientationSupported,
       reason: null,
     }))
+    setDiag((d) => ({ ...d, lastAction: 'granted — listeners attached' }))
   }, [attach])
 
   // Liveness and measured rate. Polled, so sensor events never cause renders.
@@ -194,5 +240,42 @@ export function useSensors() {
 
   useEffect(() => () => detachRef.current?.(), [])
 
-  return { status, enable, latest, drain, recent }
+  /*
+   * Probe on mount. Android Chrome requires no permission call, so attaching
+   * immediately reveals whether events flow at all — which distinguishes a
+   * blocked permission from a non-secure context from a device with no sensors,
+   * without the user having to tap anything.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const probeDetach = attach()
+    setDiag((d) => ({
+      ...d,
+      protocol: window.location.protocol,
+      host: window.location.host,
+      isSecureContext: window.isSecureContext,
+      hasDeviceMotion: typeof window.DeviceMotionEvent !== 'undefined',
+      hasDeviceOrientation: typeof window.DeviceOrientationEvent !== 'undefined',
+      needsPermissionCall: needsPermissionCall(),
+    }))
+    return probeDetach
+  }, [attach])
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setDiag((d) =>
+        d.motionEvents === rawCounts.current.motion &&
+        d.orientationEvents === rawCounts.current.orientation
+          ? d
+          : {
+              ...d,
+              motionEvents: rawCounts.current.motion,
+              orientationEvents: rawCounts.current.orientation,
+            }
+      )
+    }, 300)
+    return () => clearInterval(id)
+  }, [])
+
+  return { status, diag, enable, latest, drain, recent }
 }

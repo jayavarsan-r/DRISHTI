@@ -30,7 +30,7 @@ const COMMANDS: { cmd: CommandName; label: string; tone?: 'danger' | 'warn' }[] 
 ]
 
 export function FieldUnit() {
-  const { status, enable, latest, drain, recent } = useSensors()
+  const { status, diag, enable, latest, drain, recent } = useSensors()
   const [mission, setMission] = useState<MissionEventMessage | null>(null)
   const [lastCommand, setLastCommand] = useState<{ cmd: CommandName; acked: boolean } | null>(null)
   const [readout, setReadout] = useState(() => latest.current)
@@ -104,7 +104,9 @@ export function FieldUnit() {
   const linkOk = stats.state === 'CONNECTED'
 
   if (status.permission !== 'granted') {
-    return <PermissionGate status={status} onEnable={enable} linkState={stats.state} />
+    return (
+      <PermissionGate status={status} diag={diag} onEnable={enable} linkState={stats.state} />
+    )
   }
 
   return (
@@ -417,13 +419,16 @@ function Triple({ a, b, c }: { a: number; b: number; c: number }) {
 
 function PermissionGate({
   status,
+  diag,
   onEnable,
   linkState,
 }: {
   status: ReturnType<typeof useSensors>['status']
+  diag: ReturnType<typeof useSensors>['diag']
   onEnable: () => void
   linkState: string
 }) {
+  const [taps, setTaps] = useState(0)
   // Read after mount: window.isSecureContext does not exist during SSR, and
   // rendering it directly makes the server emit "no" where the client emits
   // "yes", which React reports as a hydration mismatch.
@@ -486,31 +491,110 @@ function PermissionGate({
           </div>
         )}
 
-        {!blocked && (
-          <button
-            onClick={onEnable}
-            style={{
-              marginTop: 14,
-              width: '100%',
-              minHeight: 52,
-              background: 'var(--bg-raised)',
-              border: '1px solid var(--border-hot)',
-              borderRadius: 3,
-              color: 'var(--accent)',
-              fontSize: 13,
-              letterSpacing: '0.1em',
-              textTransform: 'uppercase',
-              fontWeight: 700,
-            }}
-          >
-            {status.permission === 'denied' ? 'Try again' : 'Enable sensor access'}
-          </button>
+        {/*
+          Always rendered. Hiding it when the context looks non-secure made a
+          failed check indistinguishable from a dead button, which is exactly
+          the confusion this screen exists to prevent.
+        */}
+        <button
+          onPointerDown={() => setTaps((n) => n + 1)}
+          onClick={onEnable}
+          style={{
+            marginTop: 14,
+            width: '100%',
+            minHeight: 56,
+            background: 'var(--bg-raised)',
+            border: '1px solid var(--border-hot)',
+            borderRadius: 3,
+            color: 'var(--accent)',
+            fontSize: 13,
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            fontWeight: 700,
+            WebkitTapHighlightColor: 'rgba(34,211,238,0.25)',
+            touchAction: 'manipulation',
+          }}
+        >
+          {status.permission === 'denied' || taps > 0
+            ? 'Retry sensor access'
+            : 'Enable sensor access'}
+        </button>
+
+        {taps > 0 && (
+          <div className="mono" style={{ marginTop: 7, fontSize: 10.5, color: 'var(--ok)' }}>
+            ✓ Button registered {taps} tap{taps === 1 ? '' : 's'} — the control works
+          </div>
         )}
 
-        <div className="provenance" style={{ marginTop: 12 }}>
-          Link {linkState} · secure context {secure === null ? '…' : secure ? 'yes' : 'no'}
+        <div
+          style={{
+            marginTop: 14,
+            paddingTop: 11,
+            borderTop: '1px solid var(--border)',
+          }}
+        >
+          <div className="label" style={{ fontSize: 9 }}>
+            Diagnostics — read this out if it does not work
+          </div>
+          <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <D k="Protocol" v={diag.protocol || '…'} bad={diag.protocol === 'http:'} />
+            <D k="Host" v={diag.host || '…'} />
+            <D
+              k="Secure context"
+              v={diag.isSecureContext === null ? '…' : diag.isSecureContext ? 'YES' : 'NO'}
+              bad={diag.isSecureContext === false}
+            />
+            <D k="DeviceMotionEvent" v={diag.hasDeviceMotion ? 'present' : 'MISSING'} bad={!diag.hasDeviceMotion} />
+            <D k="DeviceOrientationEvent" v={diag.hasDeviceOrientation ? 'present' : 'MISSING'} bad={!diag.hasDeviceOrientation} />
+            <D k="Needs permission call" v={diag.needsPermissionCall ? 'yes (iOS)' : 'no (Android)'} />
+            <D
+              k="Motion events seen"
+              v={String(diag.motionEvents)}
+              bad={diag.motionEvents === 0}
+              good={diag.motionEvents > 0}
+            />
+            <D
+              k="Orientation events"
+              v={String(diag.orientationEvents)}
+              bad={diag.orientationEvents === 0}
+              good={diag.orientationEvents > 0}
+            />
+            <D k="Last action" v={diag.lastAction} />
+            <D k="Link" v={linkState} good={linkState === 'CONNECTED'} />
+          </div>
+
+          {diag.motionEvents > 0 && status.permission !== 'granted' && (
+            <div
+              className="mono"
+              style={{ marginTop: 9, fontSize: 10.5, color: 'var(--ok)', lineHeight: 1.5 }}
+            >
+              Sensors ARE delivering ({diag.motionEvents} events). Tap the button above to
+              start streaming.
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function D({ k, v, bad, good }: { k: string; v: string; bad?: boolean; good?: boolean }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+      <span className="label" style={{ fontSize: 8.5 }}>
+        {k}
+      </span>
+      <span
+        className="mono"
+        style={{
+          fontSize: 10,
+          textAlign: 'right',
+          wordBreak: 'break-all',
+          color: bad ? 'var(--danger)' : good ? 'var(--ok)' : 'var(--text-hi)',
+        }}
+      >
+        {v}
+      </span>
     </div>
   )
 }
