@@ -21,6 +21,8 @@ const UI_HZ = 15
 
 const COMMANDS: { cmd: CommandName; label: string; tone?: 'danger' | 'warn' }[] = [
   { cmd: 'START_MISSION', label: 'Start mission' },
+  { cmd: 'FIELD_STEER_ON', label: '▶ Take the wheel' },
+  { cmd: 'FIELD_STEER_OFF', label: '■ Release the wheel' },
   { cmd: 'GNSS_DENIED', label: 'GNSS blackout', tone: 'danger' },
   { cmd: 'GNSS_SPOOFED', label: 'GNSS spoof', tone: 'danger' },
   { cmd: 'POTHOLE', label: 'Pothole', tone: 'warn' },
@@ -52,7 +54,6 @@ export function FieldUnit() {
 
   // Transmit batched samples. Sensor events themselves never touch React.
   useEffect(() => {
-    if (status.permission !== 'granted') return
     const id = setInterval(() => {
       const batch = drain()
       send({
@@ -66,7 +67,10 @@ export function FieldUnit() {
       })
     }, 1000 / TX_HZ)
     return () => clearInterval(id)
-  }, [status.permission, status.hz, status.live, drain, send, latest])
+    // Streams regardless of gate state: Mission Control needs to see whether
+    // this phone is producing anything, which is precisely the information the
+    // gate was hiding.
+  }, [status.hz, status.live, drain, send, latest])
 
   // Numeric readout + attitude, driven off a timer rather than sensor events.
   useEffect(() => {

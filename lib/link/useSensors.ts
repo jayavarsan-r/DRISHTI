@@ -210,8 +210,8 @@ export function useSensors() {
       }
     }
 
-    detachRef.current?.()
-    detachRef.current = attach()
+    // Keep the probe listeners; attaching a second set would double-count.
+    if (!detachRef.current) detachRef.current = attach()
     setStatus((s) => ({
       ...s,
       permission: 'granted',
@@ -273,6 +273,32 @@ export function useSensors() {
               orientationEvents: rawCounts.current.orientation,
             }
       )
+
+      /*
+       * Auto-advance. If the probe is already receiving events there is nothing
+       * left to ask permission for, and holding the user behind a consent gate
+       * they cannot satisfy is how the phone ends up connected but streaming
+       * nothing but heartbeats. Android reaches here; iOS still needs the tap,
+       * and falls through to the button.
+       */
+      if (rawCounts.current.motion + rawCounts.current.orientation > 0) {
+        setStatus((st) =>
+          st.permission === 'granted'
+            ? st
+            : {
+                ...st,
+                permission: 'granted',
+                motionSupported: true,
+                orientationSupported: true,
+                reason: null,
+              }
+        )
+        setDiag((d) =>
+          d.lastAction === 'auto: events detected, gate skipped'
+            ? d
+            : { ...d, lastAction: 'auto: events detected, gate skipped' }
+        )
+      }
     }, 300)
     return () => clearInterval(id)
   }, [])

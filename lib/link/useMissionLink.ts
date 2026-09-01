@@ -76,6 +76,12 @@ export function useMissionLink({
         case 'PHONE_SLIP':
           engine.firePhoneSlip()
           return { accepted: true }
+        case 'FIELD_STEER_ON':
+          engine.setFieldSteer(true)
+          return { accepted: true }
+        case 'FIELD_STEER_OFF':
+          engine.setFieldSteer(false)
+          return { accepted: true }
         default:
           return { accepted: false, reason: 'Unknown command' }
       }

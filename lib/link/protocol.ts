@@ -82,6 +82,8 @@ export type CommandName =
   | 'POTHOLE'
   | 'PHONE_SLIP'
   | 'GNSS_RECOVERY'
+  | 'FIELD_STEER_ON'
+  | 'FIELD_STEER_OFF'
 
 export interface CommandMessage {
   type: 'command'

@@ -23,6 +23,7 @@ import { useMissionLink } from '@/lib/link/useMissionLink'
 import { FieldUnitPanel } from './link/FieldUnitPanel'
 import { PairingCard } from './link/PairingCard'
 import { FieldOrientationOverlay } from './link/FieldOrientationOverlay'
+import { FieldSteerPanel } from './link/FieldSteerPanel'
 import { useEngine, useSnapshot } from './useEngine'
 
 export type UiMode = 'presentation' | 'technical'
@@ -102,7 +103,12 @@ export function AppShell() {
           display: 'grid',
           // Technical mode shrinks the canvas to ~60% and gives the freed space
           // to a two-column panel console.
-          gridTemplateColumns: uiMode === 'presentation' ? '1fr 300px' : '1fr 620px',
+          gridTemplateColumns:
+            uiMode === 'technical'
+              ? '1fr 620px'
+              : snap.driveMode === 'field'
+                ? '1fr 360px'
+                : '1fr 300px',
           gap: 12,
           padding: 12,
         }}
@@ -131,6 +137,13 @@ export function AppShell() {
             position: 'relative',
           }}
         >
+          <FieldSteerPanel
+            engine={engine}
+            snap={snap}
+            orientationRef={orientationRef}
+            live={telemetry?.sensorsLive ?? false}
+            connected={linkStats.peerConnected}
+          />
           <MetricRail
             snap={snap}
             uiMode={uiMode}
