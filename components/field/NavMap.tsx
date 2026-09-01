@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { SEGMENTS, ROUTE, ROUTE_LENGTH, poseAt } from '@/lib/sim/road'
+import { SEGMENTS, ROUTE, ROUTE_LENGTH, ROAD_BOUNDS, poseAt } from '@/lib/sim/road'
+import { RAD_TO_DEG as DEG, shortestAngleDelta as angleDelta } from './nav-math'
 import type { MissionStateMessage } from '@/lib/link/protocol'
 
 /**
@@ -9,7 +10,9 @@ import type { MissionStateMessage } from '@/lib/link/protocol'
  *
  * Renders the AUTHORITATIVE vehicle state streamed from Mission Control. There
  * is no simulation here and no second clock: the phone interpolates between
- * received states for smoothness and nothing more.
+ * received states for smoothness and nothing more. If the stream stops, the
+ * interpolator converges on the last state received and holds it — it never
+ * extrapolates motion the server did not send.
  *
  * The road network itself is static shared geometry imported from lib/sim/road,
  * so the two screens draw the same map without streaming polylines every frame.
@@ -17,7 +20,6 @@ import type { MissionStateMessage } from '@/lib/link/protocol'
 
 export type CameraMode = 'heading-up' | 'north-up'
 
-const DEG = 180 / Math.PI
 /**
  * Metres of world visible across the shorter screen axis.
  *
@@ -28,6 +30,11 @@ const DEG = 180 / Math.PI
 const VIEW_SPAN = 430
 /** Ground grid spacing, metres. Gives motion a reference to move against. */
 const GRID_M = 50
+/** Chase gain per frame for pose, and the slower one for the camera itself. */
+const K_POSE = 0.22
+const K_CAM = 0.1
+/** Margin around the route when zoomed out to the whole drive, metres. */
+const OVERVIEW_PAD = 120
 
 export function NavMap({
   stateRef,
@@ -43,10 +50,22 @@ export function NavMap({
   const markerRef = useRef<SVGGElement>(null)
   const doneRef = useRef<SVGPolylineElement>(null)
   const boRef = useRef<SVGPolylineElement>(null)
+  const tintRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
 
   /** Interpolated pose, so discrete 20 Hz updates render as continuous motion. */
   const shown = useRef({ x: 0, y: 0, psi: 0, init: false })
+  /** Interpolated estimate and its covariance, chased the same way. */
+  const shownEst = useRef({ x: 0, y: 0, psi: 0, along: 0, cross: 0 })
+  /** Interpolated camera, so switching to the overview glides instead of cutting. */
+  const cam = useRef({ fx: 0, fy: 0, scale: 0, rot: 0, cy: 0, init: false })
+  /** Outage tint strength, eased so the wash fades rather than blinks. */
+  const tint = useRef(0)
+
+  // cameraMode/follow are read through refs: changing them must not restart the
+  // animation loop, which would reset the interpolators and snap the vehicle.
+  const modeRef = useRef({ cameraMode, follow })
+  modeRef.current = { cameraMode, follow }
 
   useEffect(() => {
     let raf = 0
@@ -56,38 +75,82 @@ export function NavMap({
       const wrap = wrapRef.current
       if (m && wrap) {
         const sh = shown.current
+        const est = shownEst.current
+        const c = cam.current
+        const { cameraMode: mode, follow: following } = modeRef.current
 
         if (!sh.init) {
           sh.x = m.veh.x
           sh.y = m.veh.y
           sh.psi = m.veh.psi
           sh.init = true
+          est.x = m.est.x
+          est.y = m.est.y
+          est.psi = m.est.psi
+          est.along = m.uncertainty.along
+          est.cross = m.uncertainty.cross
         } else {
           // Critically damped chase toward the authoritative state.
-          const k = 0.22
-          sh.x += (m.veh.x - sh.x) * k
-          sh.y += (m.veh.y - sh.y) * k
-          const dp = Math.atan2(
-            Math.sin(m.veh.psi - sh.psi),
-            Math.cos(m.veh.psi - sh.psi)
-          )
-          sh.psi += dp * k
+          sh.x += (m.veh.x - sh.x) * K_POSE
+          sh.y += (m.veh.y - sh.y) * K_POSE
+          sh.psi += angleDelta(m.veh.psi, sh.psi) * K_POSE
+
+          est.x += (m.est.x - est.x) * K_POSE
+          est.y += (m.est.y - est.y) * K_POSE
+          est.psi += angleDelta(m.est.psi, est.psi) * K_POSE
+          // Uncertainty grows through a blackout and shrinks on recovery; both
+          // read as a breathing ellipse rather than a step.
+          est.along += (m.uncertainty.along - est.along) * K_POSE
+          est.cross += (m.uncertainty.cross - est.cross) * K_POSE
         }
 
         const w = wrap.clientWidth || 360
         const h = wrap.clientHeight || 520
-        const scale = Math.min(w, h) / VIEW_SPAN
 
-        // Vehicle sits low on screen when following, the way a nav app frames
-        // the road ahead rather than centring the car.
-        const cx = w / 2
-        const cy = follow ? h * 0.62 : h / 2
+        // Target camera. Following frames the road ahead with the vehicle low
+        // on screen; the overview fits the whole drive, north up.
+        let tScale: number
+        let tRot: number
+        let tFx: number
+        let tFy: number
+        let tCy: number
 
-        const rot = cameraMode === 'heading-up' ? sh.psi * DEG - 90 : 0
+        if (following) {
+          tScale = Math.min(w, h) / VIEW_SPAN
+          tRot = mode === 'heading-up' ? sh.psi - Math.PI / 2 : 0
+          tFx = sh.x
+          tFy = sh.y
+          tCy = h * 0.62
+        } else {
+          const bw = ROAD_BOUNDS.maxX - ROAD_BOUNDS.minX + OVERVIEW_PAD
+          const bh = ROAD_BOUNDS.maxY - ROAD_BOUNDS.minY + OVERVIEW_PAD
+          tScale = Math.min(w / bw, h / bh)
+          tRot = 0
+          tFx = (ROAD_BOUNDS.minX + ROAD_BOUNDS.maxX) / 2
+          tFy = (ROAD_BOUNDS.minY + ROAD_BOUNDS.maxY) / 2
+          tCy = h / 2
+        }
 
+        if (!c.init) {
+          c.scale = tScale
+          c.rot = tRot
+          c.fx = tFx
+          c.fy = tFy
+          c.cy = tCy
+          c.init = true
+        } else {
+          c.scale += (tScale - c.scale) * K_CAM
+          c.fx += (tFx - c.fx) * K_CAM
+          c.fy += (tFy - c.fy) * K_CAM
+          c.cy += (tCy - c.cy) * K_CAM
+          // Shortest-angle rotation: 359° to 0° goes forward through 360°.
+          c.rot += angleDelta(tRot, c.rot) * K_CAM
+        }
+
+        const s = c.scale
         worldRef.current?.setAttribute(
           'transform',
-          `translate(${cx} ${cy}) rotate(${rot.toFixed(2)}) scale(${scale.toFixed(4)} ${-scale.toFixed(4)}) translate(${(-sh.x).toFixed(2)} ${(-sh.y).toFixed(2)})`
+          `translate(${(w / 2).toFixed(2)} ${c.cy.toFixed(2)}) rotate(${(c.rot * DEG).toFixed(2)}) scale(${s.toFixed(4)} ${(-s).toFixed(4)}) translate(${(-c.fx).toFixed(2)} ${(-c.fy).toFixed(2)})`
         )
 
         // Completed route, in world space.
@@ -116,13 +179,18 @@ export function NavMap({
           }
         }
 
+        // Edge wash while the fix is unusable — denied or being rejected.
+        const denied = m.gnssMode === 'DENIED' || m.gnssMode === 'SPOOFED' || m.navState === 'DR_ACTIVE'
+        tint.current += ((denied ? 1 : 0) - tint.current) * 0.06
+        tintRef.current?.style.setProperty('opacity', tint.current.toFixed(3))
+
         // Uncertainty, drawn about the ESTIMATE and oriented to it.
         if (ellipseRef.current) {
-          ellipseRef.current.setAttribute('rx', (2 * m.uncertainty.along).toFixed(1))
-          ellipseRef.current.setAttribute('ry', (2 * m.uncertainty.cross).toFixed(1))
+          ellipseRef.current.setAttribute('rx', (2 * est.along).toFixed(1))
+          ellipseRef.current.setAttribute('ry', (2 * est.cross).toFixed(1))
           ellipseRef.current.setAttribute(
             'transform',
-            `translate(${m.est.x.toFixed(1)} ${m.est.y.toFixed(1)}) rotate(${(m.est.psi * DEG).toFixed(1)})`
+            `translate(${est.x.toFixed(1)} ${est.y.toFixed(1)}) rotate(${(est.psi * DEG).toFixed(1)})`
           )
         }
 
@@ -136,7 +204,7 @@ export function NavMap({
 
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [stateRef, cameraMode, follow])
+  }, [stateRef])
 
   const dest = poseAt(ROUTE_LENGTH)
 
@@ -250,6 +318,19 @@ export function NavMap({
           </g>
         </g>
       </svg>
+
+      {/* GNSS-outage wash, opacity driven per frame */}
+      <div
+        ref={tintRef}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          opacity: 0,
+          pointerEvents: 'none',
+          background:
+            'radial-gradient(ellipse at 50% 62%, rgba(239,68,68,0) 42%, rgba(239,68,68,0.16) 100%)',
+        }}
+      />
     </div>
   )
 }

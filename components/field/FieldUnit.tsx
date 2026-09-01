@@ -11,8 +11,13 @@ import {
   type MissionStateMessage,
 } from '@/lib/link/protocol'
 import { NavMap, type CameraMode } from './NavMap'
-import { NavTopBar, NavHud } from './NavHud'
-import { EventToast } from './EventToast'
+import { NavTopBar, NavFloatingHud, NavHud, mapTop } from './NavHud'
+import { NavCompass } from './NavCompass'
+import { TurnCard, InstructionBanner } from './NavGuidance'
+import { GnssStatusCard } from './GnssStatusCard'
+import { MissionTimeline, type TimelineMark } from './MissionTimeline'
+import { LinkBanner, useLinkNotice, ProvenanceStrip } from './LinkBanner'
+import { FieldSensorDrawer } from './FieldSensorDrawer'
 import { Attitude } from './Attitude'
 import { SensorGraph } from './SensorGraph'
 
@@ -29,19 +34,55 @@ export function FieldUnit() {
   const [follow, setFollow] = useState(true)
 
   const [mission, setMission] = useState<MissionStateMessage | null>(null)
-  const [event, setEvent] = useState<MissionEventMessage | null>(null)
   const [readout, setReadout] = useState(() => latest.current)
   const [motionEnergy, setMotionEnergy] = useState(0)
 
   /** Authoritative state, kept in a ref so the map animates without renders. */
   const missionRef = useRef<MissionStateMessage | null>(null)
+  /** Vehicle heading for the compass, read per frame without re-rendering. */
+  const headingRef = useRef({ psi: 0 })
+  const [marks, setMarks] = useState<TimelineMark[]>([])
+  /** Most recent discrete engine event, shown once by the status card. */
+  const [lastEvent, setLastEvent] = useState<MissionEventMessage | null>(null)
 
   const onMessage = useCallback((m: LinkMessage) => {
     if (m.type === 'mission') {
       missionRef.current = m
+      headingRef.current.psi = m.veh.psi
       return
     }
-    if (m.type === 'event') setEvent(m)
+    if (m.type === 'event') {
+      setLastEvent(m)
+      // Pin notable events to the route position where they happened.
+      const at = missionRef.current?.s ?? 0
+      const msg = m.event.toUpperCase()
+      const tone =
+        msg.includes('REJECT') || msg.includes('LOST')
+          ? 'var(--danger)'
+          : msg.includes('SHOCK') || msg.includes('MOUNT')
+            ? 'var(--warn)'
+            : msg.includes('RESTOR') || msg.includes('FUSION')
+              ? 'var(--ok)'
+              : null
+      const short = msg.includes('SIGNAL LOST')
+        ? 'GNSS LOST'
+        : msg.includes('REJECT')
+          ? 'SPOOF'
+          : msg.includes('FUSION')
+            ? 'RECOVERY'
+            : msg.includes('SHOCK')
+              ? 'SHOCK'
+              : msg.includes('MOUNT')
+                ? 'MOUNT'
+                : null
+      if (tone && short) {
+        setMarks((prev) =>
+          prev.some((k) => k.label === short && Math.abs(k.s - at) < 20)
+            ? prev
+            : [...prev, { s: at, label: short, tone }]
+        )
+      }
+    }
   }, [])
 
   const { stats, send } = useLink({ role: 'field', nodeId: NODE_ID, onMessage })
@@ -78,7 +119,9 @@ export function FieldUnit() {
         gyro: { ...s.gyro },
         orientation: { ...s.orientation },
       })
-      setMission(missionRef.current)
+      const cur = missionRef.current
+      setMission(cur)
+      if (cur && cur.t < 0.4) setMarks((k) => (k.length ? [] : k))
 
       const win = recent(30).filter((x) => accelMagnitude(x) > 1)
       setMotionEnergy(
@@ -105,6 +148,7 @@ export function FieldUnit() {
     [send]
   )
 
+  const notice = useLinkNotice(stats.state, !!mission)
   const linked = stats.state === 'CONNECTED' && stats.peerConnected
   const gateNeeded = status.permission !== 'granted' && diag.motionEvents === 0
 
@@ -127,27 +171,43 @@ export function FieldUnit() {
           <>
             <NavMap stateRef={missionRef} cameraMode={camera} follow={follow} />
             <NavTopBar m={mission} linked={linked} />
-            <EventToast event={event} />
+            <NavFloatingHud m={mission} />
+
+            {/* The link notice outranks guidance: a frozen map must say so. */}
+            {notice ? <LinkBanner notice={notice} /> : <InstructionBanner m={mission} />}
+
+            <div style={{ position: 'absolute', left: 12, top: mapTop(150) }}>
+              <NavCompass headingRef={headingRef} />
+            </div>
+
+            <GnssStatusCard m={mission} event={lastEvent} />
+            <TurnCard m={mission} />
+            <MissionTimeline m={mission} marks={marks} />
             <NavHud m={mission} />
 
             <div
               style={{
                 position: 'absolute',
                 right: 10,
-                top: 104,
+                top: mapTop(150),
                 display: 'flex',
                 flexDirection: 'column',
+                alignItems: 'flex-end',
                 gap: 7,
               }}
             >
               <MapBtn
                 on={camera === 'heading-up'}
                 onClick={() => setCamera(camera === 'heading-up' ? 'north-up' : 'heading-up')}
-                label={camera === 'heading-up' ? 'HDG' : 'N'}
+                label={camera === 'heading-up' ? 'HDG' : 'N↑'}
+                title={camera === 'heading-up' ? 'Heading up' : 'North up'}
               />
-              <MapBtn on={follow} onClick={() => setFollow((f) => !f)} label="◎" />
+              {follow ? (
+                <MapBtn on={false} onClick={() => setFollow(false)} label="⤢" title="Whole route" />
+              ) : (
+                <MapBtn on onClick={() => setFollow(true)} label="RECENTER" wide />
+              )}
             </div>
-
           </>
         )}
 
@@ -167,6 +227,8 @@ export function FieldUnit() {
         )}
         {tab === 'mission' && <MissionTab m={mission} onCommand={fire} linked={linked} />}
       </div>
+
+      <ProvenanceStrip linked={linked} running={mission?.running ?? false} />
 
       <nav
         style={{
@@ -207,24 +269,34 @@ function MapBtn({
   onClick,
   label,
   tone,
+  wide,
+  title,
 }: {
   on: boolean
   onClick: () => void
   label: string
   tone?: string
+  wide?: boolean
+  title?: string
 }) {
   return (
     <button
       onClick={onClick}
+      title={title}
+      aria-label={title ?? label}
       style={{
-        width: 40,
+        minWidth: 40,
+        padding: wide ? '0 11px' : 0,
+        width: wide ? 'auto' : 40,
         height: 40,
         borderRadius: 4,
         background: on ? 'rgba(34,211,238,0.16)' : 'rgba(11,20,32,0.88)',
         border: `1px solid ${on ? tone ?? 'var(--border-hot)' : 'var(--border)'}`,
         color: on ? tone ?? 'var(--accent)' : 'var(--text-mid)',
-        fontSize: 12,
+        fontSize: wide ? 10 : 12,
+        letterSpacing: wide ? '0.08em' : undefined,
         fontWeight: 700,
+        backdropFilter: 'blur(6px)',
       }}
     >
       {label}
@@ -264,6 +336,12 @@ function StatusTab({ m }: { m: MissionStateMessage | null }) {
       </div>
     )
   }
+  const mode =
+    m.navState === 'DR_ACTIVE'
+      ? 'DEAD RECKONING'
+      : m.navState === 'REACQUIRING'
+        ? 'RECOVERY'
+        : 'GNSS-AIDED'
   const stages: [string, boolean][] = [
     ['IMU', true],
     ['AI SPEED', m.ablation.aiSpeed],
@@ -275,13 +353,20 @@ function StatusTab({ m }: { m: MissionStateMessage | null }) {
   return (
     <div style={{ padding: 12, overflowY: 'auto', height: '100%' }}>
       <Section title="Navigation state · simulated">
-        <Row k="Phase" v={m.phase} color="var(--accent)" />
-        <Row k="Mode" v={m.navState.replace('_', ' ')} />
+        <Row k="Mode" v={mode} color="var(--accent)" />
+        <Row k="Phase" v={m.phase} />
+        <Row k="Filter state" v={m.navState.replace(/_/g, ' ')} />
         <Row k="GNSS" v={m.gnssMode} color={m.gnssMode === 'DENIED' ? 'var(--danger)' : 'var(--ok)'} />
         <Row k="Position error" v={`${m.drishtiError.toFixed(1)} m`} />
         <Row k="Drift" v={`${(m.errorFraction * 100).toFixed(2)} %`} />
         <Row k="Uncertainty" v={`${Math.hypot(m.uncertainty.along, m.uncertainty.cross).toFixed(1)} m`} />
         <Row k="Speed" v={`${(m.veh.v * 3.6).toFixed(1)} km/h`} />
+        <Row k="Mission time" v={`T+${m.t.toFixed(1)} s`} />
+        <Row
+          k="GNSS outage"
+          v={`${m.blackoutElapsed.toFixed(1)} s · ${m.blackoutDistance.toFixed(0)} m`}
+          color={m.blackoutElapsed > 0 ? 'var(--danger)' : undefined}
+        />
       </Section>
 
       <Section title="System pipeline">
@@ -327,6 +412,14 @@ function SensorsTab({
 }) {
   return (
     <div style={{ padding: 12, overflowY: 'auto', height: '100%' }}>
+      <FieldSensorDrawer
+        readout={readout}
+        hz={status.hz}
+        live={status.live}
+        motionEnergy={motionEnergy}
+        connected={stats.state === 'CONNECTED'}
+      />
+      <div style={{ height: 10 }} />
       <Section title="Real phone orientation">
         <Attitude yawRef={yawRef} pitchRef={pitchRef} rollRef={rollRef} size={140} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginTop: 6 }}>
