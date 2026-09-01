@@ -1,28 +1,9 @@
 'use client'
 
 import { TARGET_ERROR_FRACTION } from '@/lib/sim/constants'
-import type { NavState, Snapshot } from '@/lib/sim/types'
+import type { Snapshot } from '@/lib/sim/types'
 import type { UiMode } from '../AppShell'
-
-const STATE_LABEL: Record<NavState, string> = {
-  BOOT: 'BOOT',
-  ALIGNING: 'ALIGNING',
-  GNSS_ACTIVE: 'GNSS + DR',
-  GNSS_DEGRADED: 'DEGRADED',
-  DR_ACTIVE: 'DR ACTIVE',
-  REACQUIRING: 'REACQUIRING',
-  MOUNT_CHANGE: 'RE-ALIGNING',
-}
-
-const STATE_COLOR: Record<NavState, string> = {
-  BOOT: 'var(--text-mid)',
-  ALIGNING: 'var(--warn)',
-  GNSS_ACTIVE: 'var(--ok)',
-  GNSS_DEGRADED: 'var(--warn)',
-  DR_ACTIVE: 'var(--drishti)',
-  REACQUIRING: 'var(--accent)',
-  MOUNT_CHANGE: 'var(--warn)',
-}
+import { ModePanel } from './ModePanel'
 
 const GNSS_COLOR: Record<string, string> = {
   NOMINAL: 'var(--ok)',
@@ -83,9 +64,7 @@ export function MetricRail({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <Metric label="Mode" provenance="Filter state machine" size={big} why={whyMode}>
-        <span style={{ color: STATE_COLOR[snap.navState] }}>{STATE_LABEL[snap.navState]}</span>
-      </Metric>
+      <ModePanel snap={snap} uiMode={uiMode} scale={scale} whyMode={whyMode} />
 
       <Metric
         label="Error / distance"

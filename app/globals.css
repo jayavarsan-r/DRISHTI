@@ -146,27 +146,52 @@ button:disabled {
   }
 }
 
+.judge-workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns:
+    clamp(260px, 20vw, 300px)
+    minmax(0, 1fr)
+    clamp(300px, 22vw, 340px);
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.judge-map-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.judge-sidebar {
+  min-width: 0;
+  min-height: 0;
+  padding-right: 2px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+}
+
+@media (min-width: 1600px) {
+  .judge-workspace {
+    grid-template-columns: 300px minmax(0, 1fr) 340px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .judge-workspace {
+    grid-template-columns: 240px minmax(0, 1fr) 280px;
+    gap: 8px;
+    padding: 8px;
+  }
+}
+
 /* ── Map HUD + controls (Three.js navigation) ── */
-
-.trajectory-map-mount {
-  --decision-strip-height: 36px;
-  --map-controls-right: 10px;
-  --map-controls-bottom: 88px;
-  --map-controls-width: 76px;
-  --map-controls-height: 132px;
-  --map-hud-gap: 10px;
-  container-type: size;
-}
-
-.trajectory-error-chart-slot {
-  position: absolute;
-  right: calc(
-    var(--map-controls-right) + var(--map-controls-width) + var(--map-hud-gap)
-  );
-  bottom: calc(var(--decision-strip-height) + 10px);
-  z-index: 5;
-  pointer-events: none;
-}
 
 .z-hud {
   z-index: 10;
@@ -236,25 +261,4 @@ button:disabled {
   color: var(--text-lo);
   background: rgba(3, 6, 8, 0.92);
   pointer-events: none;
-}
-
-@container (max-height: 430px) {
-  .trajectory-error-chart-slot {
-    right: 12px;
-    bottom: calc(
-      var(--map-controls-bottom) + var(--map-controls-height) + 8px
-    );
-    transform: scale(0.88);
-    transform-origin: bottom right;
-  }
-}
-
-@container (max-width: 430px) and (min-height: 431px) {
-  .trajectory-error-chart-slot {
-    right: calc(
-      var(--map-controls-right) + var(--map-controls-width) + 6px
-    );
-    transform: scale(0.82);
-    transform-origin: bottom right;
-  }
 }

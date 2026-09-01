@@ -6,7 +6,7 @@ import { Footer } from './Footer'
 import { TimelineStrip } from './TimelineStrip'
 import { ControlBar } from './ControlBar'
 import { TrajectoryCanvas } from './TrajectoryCanvas'
-import { MetricRail } from './rail/MetricRail'
+import { ModePanel } from './rail/ModePanel'
 import { EventLog } from './rail/EventLog'
 import { WhyModePopover, WhyRejectedPopover } from './rail/WhyPopover'
 import { SpeedModelPanel } from './panels/SpeedModelPanel'
@@ -95,43 +95,9 @@ export function AppShell() {
       />
       <TimelineStrip snap={snap} />
 
-      <main
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'grid',
-          // Technical mode shrinks the canvas to ~60% and gives the freed space
-          // to a two-column panel console.
-          gridTemplateColumns: uiMode === 'presentation' ? '1fr 300px' : '1fr 620px',
-          gap: 12,
-          padding: 12,
-        }}
-      >
-        <TrajectoryCanvas
-          overlay={
-            <FieldOrientationOverlay
-              orientationRef={orientationRef}
-              live={telemetry?.sensorsLive ?? false}
-              connected={linkStats.peerConnected}
-            />
-          }
-        >
-          {snap.finished && !cardDismissed && (
-            <MissionCompleteCard snap={snap} onClose={() => setCardDismissed(true)} />
-          )}
-        </TrajectoryCanvas>
-        <aside
-          style={{
-            overflowY: 'auto',
-            paddingRight: 2,
-            display: 'grid',
-            gridTemplateColumns: uiMode === 'technical' ? '1fr 1fr' : '1fr',
-            alignContent: 'start',
-            gap: 12,
-            position: 'relative',
-          }}
-        >
-          <MetricRail
+      <main className="judge-workspace" data-ui-mode={uiMode}>
+        <aside className="judge-sidebar judge-sidebar-left">
+          <ModePanel
             snap={snap}
             uiMode={uiMode}
             scale={fullscreen && uiMode === 'presentation' ? 1.4 : 1}
@@ -153,36 +119,53 @@ export function AppShell() {
               </button>
             }
           />
+          <AblationPanel engine={engine} snap={snap} />
+          <UncertaintyPanel snap={snap} />
+          <MapHypothesesPanel snap={snap} />
+          <EdgeEnginePanel engine={engine} snap={snap} />
+          {why === 'mode' && <WhyModePopover snap={snap} onClose={() => setWhy(null)} />}
+        </aside>
+
+        <section className="judge-map-stage">
+          <TrajectoryCanvas
+            overlay={
+              <FieldOrientationOverlay
+                orientationRef={orientationRef}
+                live={telemetry?.sensorsLive ?? false}
+                connected={linkStats.peerConnected}
+              />
+            }
+          >
+            {snap.finished && !cardDismissed && (
+              <MissionCompleteCard snap={snap} onClose={() => setCardDismissed(true)} />
+            )}
+          </TrajectoryCanvas>
+        </section>
+
+        <aside className="judge-sidebar judge-sidebar-right">
           <EventLog
             snap={snap}
             uiMode={uiMode}
             onWhyRejected={() => setWhy(why === 'rejected' ? null : 'rejected')}
           />
+          {/* Connect field unit — hidden for judge demo; restore when pairing UI is needed.
           {!linkStats.peerConnected && <PairingCard />}
-          {uiMode === 'technical' && (
-            <>
-              <FieldUnitPanel
-                stats={linkStats}
-                telemetry={telemetry}
-                orientationRef={orientationRef}
-              />
-              <AblationPanel engine={engine} snap={snap} />
-              <SpeedModelPanel snap={snap} />
-              <UncertaintyPanel snap={snap} />
-              <GnssIntegrityPanel snap={snap} />
-              <MapHypothesesPanel snap={snap} />
-              <div className="panel" style={{ padding: 12 }}>
-                <div className="panel-title" style={{ fontSize: 11 }}>
-                  Error chart
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <ErrorChart snap={snap} width={276} height={180} />
-                </div>
-              </div>
-              <EdgeEnginePanel engine={engine} snap={snap} />
-            </>
-          )}
-          {why === 'mode' && <WhyModePopover snap={snap} onClose={() => setWhy(null)} />}
+          */}
+          <FieldUnitPanel
+            stats={linkStats}
+            telemetry={telemetry}
+            orientationRef={orientationRef}
+          />
+          <SpeedModelPanel snap={snap} />
+          <GnssIntegrityPanel snap={snap} />
+          <div className="panel" style={{ padding: 12 }}>
+            <div className="panel-title" style={{ fontSize: 11 }}>
+              Error chart
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <ErrorChart snap={snap} width={276} height={180} />
+            </div>
+          </div>
           {why === 'rejected' && <WhyRejectedPopover snap={snap} onClose={() => setWhy(null)} />}
         </aside>
       </main>

@@ -14,7 +14,6 @@ import { BlackoutClock } from './canvas/BlackoutClock'
 import { BaselineFailureBanner } from './canvas/BaselineFailureBanner'
 import { DecisionStrip } from './canvas/DecisionStrip'
 import { OffMapChip } from './canvas/OffMapChip'
-import { ErrorChart } from './canvas/ErrorChart'
 import { MapControls } from './mission/MapControls'
 
 const PAD = 45
@@ -117,10 +116,6 @@ export function TrajectoryCanvas({
       <BlackoutClock snap={snap} />
       <OffMapChip snap={snap} />
       <BaselineFailureBanner snap={snap} />
-
-      <div className="trajectory-error-chart-slot">
-        <ErrorChart snap={snap} width={220} height={120} inset />
-      </div>
 
       <DecisionStrip snap={snap} />
       {children}
