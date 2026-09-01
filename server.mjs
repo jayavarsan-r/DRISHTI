@@ -133,6 +133,7 @@ wss.on('connection', (ws, req) => {
         break
 
       case 'event':
+      case 'mission':
       case 'command_ack':
         sendTo('field', msg)
         break

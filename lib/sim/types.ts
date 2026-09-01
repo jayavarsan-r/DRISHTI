@@ -100,13 +100,4 @@ export interface Snapshot {
   ablation: Ablation
   recoveryTime: number | null
   duration: number
-
-  /** 'field' when the vehicle heading is commanded by the field unit. */
-  driveMode: 'scripted' | 'field'
-  /** Commanded heading, world frame radians. */
-  commandedHeading: number
-  /** commandedHeading minus actual vehicle heading, radians. */
-  headingError: number
-  /** Yaw rate the vehicle is currently using, rad/s. */
-  turnRate: number
 }

@@ -82,8 +82,6 @@ export type CommandName =
   | 'POTHOLE'
   | 'PHONE_SLIP'
   | 'GNSS_RECOVERY'
-  | 'FIELD_STEER_ON'
-  | 'FIELD_STEER_OFF'
 
 export interface CommandMessage {
   type: 'command'
@@ -100,20 +98,69 @@ export interface CommandAckMessage {
   reason?: string
 }
 
-/** Mission Control -> phone: simulation state, so the phone can mirror it. */
+/**
+ * Mission Control -> phone: the authoritative simulation state.
+ *
+ * The phone renders this; it never runs its own simulation, never keeps its own
+ * clock, and never computes a second trajectory. Every figure here is SIMULATED
+ * engine output — the only real things on this link are the phone's own sensors
+ * and the transport carrying them.
+ */
+export interface MissionStateMessage {
+  type: 'mission'
+  /** engine sim time, seconds — authoritative */
+  t: number
+  running: boolean
+  finished: boolean
+  phase: MissionPhase
+  navState: string
+  gnssMode: string
+
+  /** SIMULATED ground-truth vehicle pose */
+  veh: { x: number; y: number; psi: number; v: number }
+  /** SIMULATED DRISHTI estimate */
+  est: { x: number; y: number; psi: number }
+  /** arc length along the route, metres */
+  s: number
+  distance: number
+
+  drishtiError: number
+  errorFraction: number
+  uncertainty: { along: number; cross: number; psi: number }
+  speedConfidence: number
+
+  blackoutElapsed: number
+  blackoutDistance: number
+  blackoutStartS: number | null
+  blackoutEndS: number | null
+
+  rejectedCount: number
+  anomalyCount: number
+  recoveryTime: number | null
+  nis: number | null
+  nisAccepted: boolean | null
+
+  ablation: { aiSpeed: boolean; nhc: boolean; map: boolean }
+}
+
+export type MissionPhase =
+  | 'STANDBY'
+  | 'ALIGNING'
+  | 'NORMAL NAVIGATION'
+  | 'GNSS DEGRADED'
+  | 'DR COASTING'
+  | 'RECOVERY'
+  | 'REALIGNING'
+  | 'COMPLETE'
+
+/** Discrete event, emitted once, used for transient overlays on the phone. */
 export interface MissionEventMessage {
   type: 'event'
   event: string
-  /** engine sim time, seconds */
   t: number
-  navState: string
-  gnssMode: string
-  /** all figures below are SIMULATED engine output */
-  drishtiError: number
-  errorFraction: number
-  blackoutElapsed: number
-  uncertainty: number
   severity: 'info' | 'warn' | 'error' | 'ok'
+  /** stable id so the phone shows each event exactly once */
+  id: number
 }
 
 export interface PeerStatusMessage {
@@ -131,6 +178,7 @@ export type LinkMessage =
   | CommandMessage
   | CommandAckMessage
   | MissionEventMessage
+  | MissionStateMessage
   | PeerStatusMessage
 
 export function encode(m: LinkMessage): string {

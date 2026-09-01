@@ -71,6 +71,38 @@ describe('acceptance', () => {
     expect(stripComments(link)).not.toMatch(/wss?:\/\/[0-9a-z]/i)
   })
 
+  it('phone orientation cannot move the simulated vehicle', () => {
+    /*
+     * The field unit is a sensor node and a remote control. Its orientation
+     * drives visualisation only: the vehicle's trajectory, heading and ground
+     * truth are the simulation's alone. Enforced here so a future change cannot
+     * quietly reconnect them.
+     */
+    const link = [
+      'lib/link/useMissionLink.ts',
+      'lib/link/protocol.ts',
+      'lib/link/useLink.ts',
+    ]
+    for (const f of link) {
+      const t = stripComments(readFileSync(f, 'utf8'))
+      expect(t, `${f} must not command vehicle heading`).not.toMatch(
+        /setCommandedHeading|setFieldSteer|driveMode/
+      )
+    }
+
+    // No steering path anywhere in the UI either.
+    for (const f of src()) {
+      const t = stripComments(readFileSync(f, 'utf8'))
+      expect(t, `${f} must not command vehicle heading`).not.toMatch(
+        /setCommandedHeading|setFieldSteer/
+      )
+    }
+
+    // The engine exposes no way to drive the vehicle from outside.
+    const eng = stripComments(readFileSync('lib/sim/engine.ts', 'utf8'))
+    expect(eng).not.toMatch(/setCommandedHeading|setFieldSteer|stepFreeDrive/)
+  })
+
   it('phone orientation never reaches the estimator', () => {
     // The field unit is a sensor node and a remote control, not the vehicle.
     // Its orientation may drive visualisation only.

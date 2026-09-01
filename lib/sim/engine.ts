@@ -89,26 +89,6 @@ const BASELINE_FAILURE_ERROR = 50
 /** Gyro noise and bias uncertainty handed to the covariance propagation. */
 const GYRO_NOISE = 0.004
 const BG_UNCERTAINTY = 0.001
-/*
- * FIELD STEER — free-drive vehicle model.
- *
- * In this mode the scripted ground-truth trajectory is replaced by a vehicle
- * that drives forward and turns toward a commanded heading. The command comes
- * from the phone's real orientation, which makes the phone a genuine input to
- * the demonstration rather than a dial beside it.
- *
- * Everything downstream is unchanged and still simulated: the IMU is
- * synthesised from this motion exactly as before, and all three estimators run
- * on that synthetic stream. The phone supplies a steering command; it does not
- * supply the vehicle's position, and it never reaches the estimator.
- */
-const FIELD_CRUISE_SPEED = 11
-const FIELD_ACCEL = 1.6
-/** Max yaw rate the vehicle will use to chase the commanded heading, rad/s. */
-const FIELD_MAX_TURN_RATE = 0.75
-/** Proportional gain on heading error. */
-const FIELD_STEER_GAIN = 1.6
-
 /** Deterministic log epoch, so timestamps look real without using Date.now(). */
 const LOG_EPOCH_S = 14 * 3600 + 52 * 60 + 26
 
@@ -159,11 +139,6 @@ export class Engine {
   private navState: NavState = 'BOOT'
   private ablation: Ablation = { ...FULL_ABLATION }
 
-  private driveMode: 'scripted' | 'field' = 'scripted'
-  /** Commanded heading in world frame, radians. Set from phone orientation. */
-  private commandedHeading = 0
-  private steerActive = false
-  private free = { x: 0, y: 0, psi: 0, v: 0, s: 0, omega: 0, aLong: 0 }
 
   private scriptArmed = false
   private firedScript = new Set<number>()
@@ -286,18 +261,6 @@ export class Engine {
     this.lastMapT = -Infinity
     this.lastErrorT = -Infinity
     this.ablation = { ...FULL_ABLATION }
-    this.driveMode = 'scripted'
-    this.steerActive = false
-    this.commandedHeading = this.truth.samples[0].psi
-    this.free = {
-      x: first.x,
-      y: first.y,
-      psi: first.psi,
-      v: 0,
-      s: 0,
-      omega: 0,
-      aLong: 0,
-    }
     this.dirty = true
     this.rebuild()
   }
@@ -361,86 +324,6 @@ export class Engine {
     this.publish()
   }
 
-  /**
-   * Hand steering to the field unit. The vehicle then drives freely, turning
-   * toward whatever heading the phone commands.
-   */
-  setFieldSteer(on: boolean): void {
-    if (this.steerActive === on) return
-    this.steerActive = on
-    this.driveMode = on ? 'field' : 'scripted'
-
-    if (on) {
-      // Continue from wherever the scripted vehicle currently is, so switching
-      // mode does not teleport the car.
-      const cur = this.truth.samples[Math.min(this.stepIndex, this.truth.samples.length - 1)]
-      this.free = {
-        x: cur.x,
-        y: cur.y,
-        psi: cur.psi,
-        v: Math.max(cur.v, 4),
-        s: cur.s,
-        omega: 0,
-        aLong: 0,
-      }
-      this.commandedHeading = cur.psi
-
-      /*
-       * Bring the filter up if it has not run yet. Engaging steering straight
-       * from BOOT would otherwise leave the state machine parked there with an
-       * uninitialised estimator, which shows up as a large error that has
-       * nothing to do with the navigation problem.
-       */
-      if (this.navState === 'BOOT' || this.navState === 'ALIGNING') {
-        this.alignProgress = 1
-        this.navState = 'GNSS_ACTIVE'
-        this.emit('ok', 'ALIGNMENT CONFIRMED · free-drive start')
-      }
-
-      // Start the estimators from the vehicle's actual pose, so the run begins
-      // at zero error rather than inheriting a scripted-run divergence.
-      this.naive.reset(cur.psi)
-      this.eskf.reset(cur.psi)
-      this.drishti.reset(cur.psi)
-      for (const e of [this.naive, this.eskf, this.drishti]) {
-        e.state.x = cur.x
-        e.state.y = cur.y
-      }
-      this.uncertainty.reset()
-      this.consecutiveRejects = 0
-      this.filterLost = false
-      this.lastAcceptedFix = null
-      this.trails.truth = ''
-      this.trails.drishti = ''
-      this.trails.naive = ''
-      this.trails.version++
-      this.errorSeries = []
-      this.baselineFailureAt = null
-
-      this.running = true
-      this.finished = false
-      this.emit('info', 'FIELD STEER ENGAGED · vehicle heading commanded by field unit')
-    } else {
-      this.emit('info', 'FIELD STEER RELEASED · returning to scripted trajectory')
-    }
-    this.publish()
-  }
-
-  /**
-   * Commanded heading from the phone, world frame radians.
-   *
-   * Normalised to [-pi, pi]. An un-normalised command still steers correctly —
-   * the error term wraps — but it reads as nonsense on screen ("-300 deg") and
-   * makes every sign question harder than it needs to be.
-   */
-  setCommandedHeading(psi: number): void {
-    this.commandedHeading = Math.atan2(Math.sin(psi), Math.cos(psi))
-  }
-
-  get fieldSteerActive(): boolean {
-    return this.steerActive
-  }
-
   /** Edge-engine demonstration. Changes the physics rate, so it changes the run. */
   setRateHz(hz: number): void {
     this.rateHz = hz
@@ -470,55 +353,10 @@ export class Engine {
 
   // --------------------------------------------------------------------- step
 
-  /**
-   * Free-drive vehicle model used in FIELD STEER mode. Produces a TruthSample
-   * of exactly the same shape as the scripted trajectory, so the IMU synthesis
-   * and all three estimators downstream are untouched.
-   */
-  private stepFreeDrive(dt: number): TruthSample {
-    const f = this.free
-
-    const err = Math.atan2(
-      Math.sin(this.commandedHeading - f.psi),
-      Math.cos(this.commandedHeading - f.psi)
-    )
-    const omega = Math.max(
-      -FIELD_MAX_TURN_RATE,
-      Math.min(FIELD_MAX_TURN_RATE, err * FIELD_STEER_GAIN)
-    )
-
-    // Slow for hard turns, the way a real vehicle must.
-    const target = FIELD_CRUISE_SPEED * (1 - 0.55 * Math.min(1, Math.abs(omega) / FIELD_MAX_TURN_RATE))
-    const aLong = Math.max(-FIELD_ACCEL * 1.5, Math.min(FIELD_ACCEL, (target - f.v) / Math.max(dt, 1e-3)))
-
-    f.v = Math.max(0, f.v + aLong * dt)
-    f.psi += omega * dt
-    // Keep heading bounded; an unbounded accumulator makes the readouts
-    // unreadable and hides genuine wrap bugs.
-    f.psi = Math.atan2(Math.sin(f.psi), Math.cos(f.psi))
-    f.x += f.v * Math.cos(f.psi) * dt
-    f.y += f.v * Math.sin(f.psi) * dt
-    f.s += f.v * dt
-    f.omega = omega
-    f.aLong = aLong
-
-    return {
-      t: this.t,
-      s: f.s,
-      x: f.x,
-      y: f.y,
-      psi: f.psi,
-      v: f.v,
-      omega,
-      aLong,
-    }
-  }
-
   private step(): void {
     const dt = this.dt
     const idx = Math.min(this.stepIndex, this.truth.samples.length - 1)
-    const tru: TruthSample =
-      this.driveMode === 'field' ? this.stepFreeDrive(dt) : this.truth.samples[idx]
+    const tru: TruthSample = this.truth.samples[idx]
 
     if (this.scriptArmed) this.runScript()
 
@@ -595,10 +433,7 @@ export class Engine {
     this.stepIndex++
     this.dirty = true
 
-    if (
-      this.driveMode !== 'field' &&
-      (tru.s >= ROUTE_LENGTH - 0.5 || this.stepIndex >= this.truth.samples.length)
-    ) {
+    if (tru.s >= ROUTE_LENGTH - 0.5 || this.stepIndex >= this.truth.samples.length) {
       this.finished = true
       this.running = false
       this.emit('ok', 'MISSION COMPLETE')
@@ -878,19 +713,7 @@ export class Engine {
 
   private rebuild(): void {
     const idx = Math.min(this.stepIndex, this.truth.samples.length - 1)
-    const tru =
-      this.driveMode === 'field'
-        ? {
-            t: this.t,
-            s: this.free.s,
-            x: this.free.x,
-            y: this.free.y,
-            psi: this.free.psi,
-            v: this.free.v,
-            omega: this.free.omega,
-            aLong: this.free.aLong,
-          }
-        : this.truth.samples[idx]
+    const tru = this.truth.samples[idx]
 
     const drishtiError = Math.hypot(this.drishti.state.x - tru.x, this.drishti.state.y - tru.y)
     const naiveError = Math.hypot(this.naive.state.x - tru.x, this.naive.state.y - tru.y)
@@ -948,14 +771,6 @@ export class Engine {
       ablation: this.ablation,
       recoveryTime: this.recoveryTime,
       duration: this.truth.duration,
-
-      driveMode: this.driveMode,
-      commandedHeading: this.commandedHeading,
-      headingError: Math.atan2(
-        Math.sin(this.commandedHeading - tru.psi),
-        Math.cos(this.commandedHeading - tru.psi)
-      ),
-      turnRate: tru.omega,
     }
     this.dirty = false
   }

@@ -5,44 +5,43 @@ import { useLink } from '@/lib/link/useLink'
 import { useSensors } from '@/lib/link/useSensors'
 import {
   accelMagnitude,
-  gyroMagnitude,
   type CommandName,
   type LinkMessage,
   type MissionEventMessage,
+  type MissionStateMessage,
 } from '@/lib/link/protocol'
+import { NavMap, type CameraMode } from './NavMap'
+import { NavTopBar, NavHud } from './NavHud'
+import { EventToast } from './EventToast'
 import { Attitude } from './Attitude'
 import { SensorGraph } from './SensorGraph'
 
 const NODE_ID = 'FIELD-UNIT-01'
-/** Transmission rate. Sensor capture runs faster; packets are batched to this. */
 const TX_HZ = 20
-/** Numeric readouts refresh here — well below the sensor rate, above human read speed. */
-const UI_HZ = 15
+const UI_HZ = 12
 
-const COMMANDS: { cmd: CommandName; label: string; tone?: 'danger' | 'warn' }[] = [
-  { cmd: 'START_MISSION', label: 'Start mission' },
-  { cmd: 'FIELD_STEER_ON', label: '▶ Take the wheel' },
-  { cmd: 'FIELD_STEER_OFF', label: '■ Release the wheel' },
-  { cmd: 'GNSS_DENIED', label: 'GNSS blackout', tone: 'danger' },
-  { cmd: 'GNSS_SPOOFED', label: 'GNSS spoof', tone: 'danger' },
-  { cmd: 'POTHOLE', label: 'Pothole', tone: 'warn' },
-  { cmd: 'PHONE_SLIP', label: 'Phone slip', tone: 'warn' },
-  { cmd: 'GNSS_RECOVERY', label: 'GNSS recovery' },
-  { cmd: 'RESET_MISSION', label: 'Reset' },
-]
+type Tab = 'navigate' | 'status' | 'sensors' | 'mission'
 
 export function FieldUnit() {
   const { status, diag, enable, latest, drain, recent } = useSensors()
-  const [mission, setMission] = useState<MissionEventMessage | null>(null)
-  const [lastCommand, setLastCommand] = useState<{ cmd: CommandName; acked: boolean } | null>(null)
+  const [tab, setTab] = useState<Tab>('navigate')
+  const [camera, setCamera] = useState<CameraMode>('heading-up')
+  const [follow, setFollow] = useState(true)
+
+  const [mission, setMission] = useState<MissionStateMessage | null>(null)
+  const [event, setEvent] = useState<MissionEventMessage | null>(null)
   const [readout, setReadout] = useState(() => latest.current)
   const [motionEnergy, setMotionEnergy] = useState(0)
 
+  /** Authoritative state, kept in a ref so the map animates without renders. */
+  const missionRef = useRef<MissionStateMessage | null>(null)
+
   const onMessage = useCallback((m: LinkMessage) => {
-    if (m.type === 'event') setMission(m)
-    if (m.type === 'command_ack') {
-      setLastCommand((c) => (c && c.cmd === m.command ? { ...c, acked: true } : c))
+    if (m.type === 'mission') {
+      missionRef.current = m
+      return
     }
+    if (m.type === 'event') setEvent(m)
   }, [])
 
   const { stats, send } = useLink({ role: 'field', nodeId: NODE_ID, onMessage })
@@ -52,371 +51,392 @@ export function FieldUnit() {
   const pitchRef = useRef<SVGGElement>(null)
   const rollRef = useRef<SVGGElement>(null)
 
-  // Transmit batched samples. Sensor events themselves never touch React.
+  // Sensor transmission. Runs regardless of gate state so Mission Control can
+  // always see whether this handset is producing anything.
   useEffect(() => {
     const id = setInterval(() => {
-      const batch = drain()
       send({
         type: 'sensor',
         nodeId: NODE_ID,
         sequence: seq.current++,
         sensorHz: status.hz,
         latest: latest.current,
-        batch,
+        batch: drain(),
         sensorsLive: status.live,
       })
     }, 1000 / TX_HZ)
     return () => clearInterval(id)
-    // Streams regardless of gate state: Mission Control needs to see whether
-    // this phone is producing anything, which is precisely the information the
-    // gate was hiding.
   }, [status.hz, status.live, drain, send, latest])
 
-  // Numeric readout + attitude, driven off a timer rather than sensor events.
+  // Numeric readouts and the attitude widget, off a timer rather than events.
   useEffect(() => {
     const id = setInterval(() => {
       const s = latest.current
-      setReadout({ ...s, accel: { ...s.accel }, gyro: { ...s.gyro }, orientation: { ...s.orientation } })
+      setReadout({
+        ...s,
+        accel: { ...s.accel },
+        gyro: { ...s.gyro },
+        orientation: { ...s.orientation },
+      })
+      setMission(missionRef.current)
 
-      /*
-       * Motion energy is |a| - g averaged over recent samples. That baseline
-       * assumes gravity is actually present: a degenerate all-zero sample
-       * scores a full 9.81 and the meter pegs HIGH on no data at all. Require
-       * both a live stream and a plausible gravity reading.
-       */
       const win = recent(30).filter((x) => accelMagnitude(x) > 1)
-      if (status.live && win.length > 0) {
-        const avg = win.reduce((a, x) => a + Math.abs(accelMagnitude(x) - 9.81), 0) / win.length
-        setMotionEnergy(Math.min(1, avg / 6))
-      } else {
-        setMotionEnergy(0)
-      }
+      setMotionEnergy(
+        status.live && win.length
+          ? Math.min(1, win.reduce((a, x) => a + Math.abs(accelMagnitude(x) - 9.81), 0) / win.length / 6)
+          : 0
+      )
 
       yawRef.current?.setAttribute('transform', `rotate(${-s.orientation.alpha})`)
-      pitchRef.current?.setAttribute('transform', `scale(1, ${Math.cos((s.orientation.beta * Math.PI) / 180).toFixed(3)})`)
+      pitchRef.current?.setAttribute(
+        'transform',
+        `scale(1, ${Math.cos((s.orientation.beta * Math.PI) / 180).toFixed(3)})`
+      )
       rollRef.current?.setAttribute('transform', `rotate(${s.orientation.gamma})`)
     }, 1000 / UI_HZ)
     return () => clearInterval(id)
   }, [latest, recent, status.live])
 
-  const fire = (cmd: CommandName) => {
-    setLastCommand({ cmd, acked: false })
-    send({ type: 'command', nodeId: NODE_ID, command: cmd, timestamp: Date.now() })
-    if ('vibrate' in navigator) navigator.vibrate?.(18)
-  }
+  const fire = useCallback(
+    (cmd: CommandName) => {
+      send({ type: 'command', nodeId: NODE_ID, command: cmd, timestamp: Date.now() })
+      if ('vibrate' in navigator) navigator.vibrate?.(15)
+    },
+    [send]
+  )
 
-  const linkOk = stats.state === 'CONNECTED'
+  const linked = stats.state === 'CONNECTED' && stats.peerConnected
+  const gateNeeded = status.permission !== 'granted' && diag.motionEvents === 0
 
-  if (status.permission !== 'granted') {
-    return (
-      <PermissionGate status={status} diag={diag} onEnable={enable} linkState={stats.state} />
-    )
+  if (gateNeeded) {
+    return <PermissionGate status={status} diag={diag} onEnable={enable} linkState={stats.state} />
   }
 
   return (
     <div
       style={{
-        minHeight: '100dvh',
+        position: 'fixed',
+        inset: 0,
         background: 'var(--bg-void)',
-        padding: 'max(10px, env(safe-area-inset-top)) 10px max(14px, env(safe-area-inset-bottom))',
         display: 'flex',
         flexDirection: 'column',
-        gap: 10,
       }}
     >
-      {/* header */}
-      <div className="panel" style={{ padding: 11 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '0.16em' }}>DRISHTI</div>
-            <div className="label" style={{ fontSize: 9.5 }}>
-              Field unit · SIH26168
-            </div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
+      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+        {tab === 'navigate' && (
+          <>
+            <NavMap stateRef={missionRef} cameraMode={camera} follow={follow} />
+            <NavTopBar m={mission} linked={linked} />
+            <EventToast event={event} />
+            <NavHud m={mission} />
+
             <div
-              className="mono"
-              style={{ fontSize: 11, color: linkOk ? 'var(--ok)' : 'var(--danger)' }}
+              style={{
+                position: 'absolute',
+                right: 10,
+                top: 104,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 7,
+              }}
             >
-              ● {stats.state}
+              <MapBtn
+                on={camera === 'heading-up'}
+                onClick={() => setCamera(camera === 'heading-up' ? 'north-up' : 'heading-up')}
+                label={camera === 'heading-up' ? 'HDG' : 'N'}
+              />
+              <MapBtn on={follow} onClick={() => setFollow((f) => !f)} label="◎" />
             </div>
-            <div className="mono" style={{ fontSize: 10, color: 'var(--text-lo)' }}>
-              {NODE_ID}
-            </div>
-          </div>
-        </div>
 
-        <div
-          style={{
-            marginTop: 9,
-            paddingTop: 8,
-            borderTop: '1px solid var(--border)',
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 6,
-          }}
-        >
-          <Stat label="Sensor" value={`${status.hz.toFixed(0)} Hz`} ok={status.live} />
-          <Stat label="Latency" value={stats.latencyMs === null ? '—' : `${stats.latencyMs} ms`} />
-          <Stat label="TX" value={stats.tx.toLocaleString()} />
-          <Stat label="RX" value={stats.rx.toLocaleString()} />
-        </div>
+          </>
+        )}
 
-        <div
-          className="provenance"
-          style={{ marginTop: 8, color: 'var(--warn)', fontSize: 9 }}
-        >
-          REAL SENSOR TELEMETRY · navigation downstream is SIMULATED
-        </div>
+        {tab === 'status' && <StatusTab m={mission} />}
+        {tab === 'sensors' && (
+          <SensorsTab
+            status={status}
+            diag={diag}
+            readout={readout}
+            recent={recent}
+            motionEnergy={motionEnergy}
+            stats={stats}
+            yawRef={yawRef}
+            pitchRef={pitchRef}
+            rollRef={rollRef}
+          />
+        )}
+        {tab === 'mission' && <MissionTab m={mission} onCommand={fire} linked={linked} />}
       </div>
 
-      {!status.live && (
-        <div
-          className="panel"
-          style={{ padding: 11, borderColor: 'var(--danger)', background: 'rgba(239,68,68,0.07)' }}
-        >
-          <div className="label" style={{ fontSize: 9.5, color: 'var(--danger)' }}>
-            No sensor events
-          </div>
-          <p style={{ fontSize: 11.5, lineHeight: 1.55, color: 'var(--text-mid)', margin: '5px 0 0' }}>
-            Access was granted but this browser is delivering no motion events, so every
-            reading below is zero — not a measurement. On a desktop browser there is no
-            sensor hardware; on a phone, check the page is served over https.
-          </p>
-        </div>
-      )}
-
-      {/* mission mirror */}
-      <div className="panel" style={{ padding: 11 }}>
-        <div className="label" style={{ fontSize: 9 }}>
-          Mission control (simulated)
-        </div>
-        {!mission && (
-          <div className="provenance" style={{ marginTop: 5 }}>
-            {stats.peerConnected ? 'Awaiting mission state…' : 'Mission Control not connected'}
-          </div>
-        )}
-        {mission && (
-          <div
+      <nav
+        style={{
+          flex: '0 0 auto',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          borderTop: '1px solid var(--border)',
+          background: 'var(--bg-panel)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}
+      >
+        {(['navigate', 'status', 'sensors', 'mission'] as Tab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
             style={{
-              marginTop: 7,
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: 7,
+              padding: '11px 0 12px',
+              background: 'transparent',
+              border: 'none',
+              borderTop: `2px solid ${tab === t ? 'var(--accent)' : 'transparent'}`,
+              color: tab === t ? 'var(--accent)' : 'var(--text-lo)',
+              fontSize: 9.5,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              fontWeight: tab === t ? 700 : 500,
             }}
           >
-            <Big label="GNSS" value={mission.gnssMode} tone={mission.gnssMode === 'DENIED' ? 'danger' : 'ok'} />
-            <Big label="Mode" value={mission.navState.replace('_', ' ')} tone="accent" />
-            <Big label="Error / dist" value={`${(mission.errorFraction * 100).toFixed(2)} %`} />
-            <Big label="Uncertainty" value={`${mission.uncertainty.toFixed(1)} m`} />
-          </div>
-        )}
-        {mission && (
-          <div className="provenance" style={{ marginTop: 7 }}>
-            Last event · {mission.event}
-          </div>
-        )}
-      </div>
+            {t}
+          </button>
+        ))}
+      </nav>
+    </div>
+  )
+}
 
-      {/* attitude */}
-      <div className="panel" style={{ padding: 11 }}>
-        <div className="label" style={{ fontSize: 9 }}>
-          Phone attitude · real orientation
+function MapBtn({
+  on,
+  onClick,
+  label,
+  tone,
+}: {
+  on: boolean
+  onClick: () => void
+  label: string
+  tone?: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: 4,
+        background: on ? 'rgba(34,211,238,0.16)' : 'rgba(11,20,32,0.88)',
+        border: `1px solid ${on ? tone ?? 'var(--border-hot)' : 'var(--border)'}`,
+        color: on ? tone ?? 'var(--accent)' : 'var(--text-mid)',
+        fontSize: 12,
+        fontWeight: 700,
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="panel" style={{ padding: 12, marginBottom: 10 }}>
+      <div className="label" style={{ fontSize: 9 }}>
+        {title}
+      </div>
+      <div style={{ marginTop: 8 }}>{children}</div>
+    </div>
+  )
+}
+
+function Row({ k, v, color }: { k: string; v: string; color?: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
+      <span className="label" style={{ fontSize: 9 }}>
+        {k}
+      </span>
+      <span className="mono" style={{ fontSize: 11.5, color: color ?? 'var(--text-hi)' }}>
+        {v}
+      </span>
+    </div>
+  )
+}
+
+function StatusTab({ m }: { m: MissionStateMessage | null }) {
+  if (!m) {
+    return (
+      <div style={{ padding: 14 }}>
+        <span className="provenance">Waiting for Mission Control…</span>
+      </div>
+    )
+  }
+  const stages: [string, boolean][] = [
+    ['IMU', true],
+    ['AI SPEED', m.ablation.aiSpeed],
+    ['ESKF', true],
+    ['NHC', m.ablation.nhc],
+    ['MAP', m.ablation.map],
+    ['GNSS', m.gnssMode !== 'DENIED' && m.nisAccepted !== false],
+  ]
+  return (
+    <div style={{ padding: 12, overflowY: 'auto', height: '100%' }}>
+      <Section title="Navigation state · simulated">
+        <Row k="Phase" v={m.phase} color="var(--accent)" />
+        <Row k="Mode" v={m.navState.replace('_', ' ')} />
+        <Row k="GNSS" v={m.gnssMode} color={m.gnssMode === 'DENIED' ? 'var(--danger)' : 'var(--ok)'} />
+        <Row k="Position error" v={`${m.drishtiError.toFixed(1)} m`} />
+        <Row k="Drift" v={`${(m.errorFraction * 100).toFixed(2)} %`} />
+        <Row k="Uncertainty" v={`${Math.hypot(m.uncertainty.along, m.uncertainty.cross).toFixed(1)} m`} />
+        <Row k="Speed" v={`${(m.veh.v * 3.6).toFixed(1)} km/h`} />
+      </Section>
+
+      <Section title="System pipeline">
+        {stages.map(([n, ok]) => (
+          <div key={n} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+            <span className="mono" style={{ fontSize: 11 }}>
+              {n}
+            </span>
+            <span className="mono" style={{ fontSize: 12, color: ok ? 'var(--ok)' : 'var(--danger)' }}>
+              {ok ? '✓ ACTIVE' : '✕ DOWN'}
+            </span>
+          </div>
+        ))}
+      </Section>
+
+      <div className="provenance">
+        All figures above are SIMULATED engine output streamed from Mission Control.
+      </div>
+    </div>
+  )
+}
+
+function SensorsTab({
+  status,
+  diag,
+  readout,
+  recent,
+  motionEnergy,
+  stats,
+  yawRef,
+  pitchRef,
+  rollRef,
+}: {
+  status: ReturnType<typeof useSensors>['status']
+  diag: ReturnType<typeof useSensors>['diag']
+  readout: ReturnType<typeof useSensors>['latest']['current']
+  recent: ReturnType<typeof useSensors>['recent']
+  motionEnergy: number
+  stats: ReturnType<typeof useLink>['stats']
+  yawRef: React.RefObject<SVGGElement | null>
+  pitchRef: React.RefObject<SVGGElement | null>
+  rollRef: React.RefObject<SVGGElement | null>
+}) {
+  return (
+    <div style={{ padding: 12, overflowY: 'auto', height: '100%' }}>
+      <Section title="Real phone orientation">
+        <Attitude yawRef={yawRef} pitchRef={pitchRef} rollRef={rollRef} size={140} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginTop: 6 }}>
+          <Row k="Yaw" v={`${readout.orientation.alpha.toFixed(1)}°`} />
+          <Row k="Pitch" v={`${readout.orientation.beta.toFixed(1)}°`} />
+          <Row k="Roll" v={`${readout.orientation.gamma.toFixed(1)}°`} />
         </div>
-        <Attitude yawRef={yawRef} pitchRef={pitchRef} rollRef={rollRef} />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
-          <Big label="Azimuth" value={`${readout.orientation.alpha.toFixed(1)}°`} />
-          <Big label="Pitch" value={`${readout.orientation.beta.toFixed(1)}°`} />
-          <Big label="Roll" value={`${readout.orientation.gamma.toFixed(1)}°`} />
-        </div>
-        <div className="provenance" style={{ marginTop: 7 }}>
+        <div className="provenance" style={{ marginTop: 6 }}>
           Phone sensor frame · not the vehicle frame
         </div>
-      </div>
+      </Section>
 
-      {/* motion energy */}
-      <div className="panel" style={{ padding: 11 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span className="label" style={{ fontSize: 9 }}>
-            Motion energy
-          </span>
-          <span className="mono" style={{ fontSize: 10, color: 'var(--text-mid)' }}>
-            {!status.live
-              ? 'NO DATA'
-              : motionEnergy > 0.55
-                ? 'HIGH'
-                : motionEnergy > 0.18
-                  ? 'MEDIUM'
-                  : 'LOW'}
-          </span>
-        </div>
-        <div
-          style={{
-            height: 10,
-            marginTop: 6,
-            background: 'var(--bg-raised)',
-            border: '1px solid var(--border)',
-            borderRadius: 2,
-            overflow: 'hidden',
-          }}
-        >
+      <Section title="Link">
+        <Row k="State" v={stats.state} color={stats.state === 'CONNECTED' ? 'var(--ok)' : 'var(--danger)'} />
+        <Row k="Sensor rate" v={`${status.hz.toFixed(1)} Hz`} color={status.live ? 'var(--ok)' : 'var(--danger)'} />
+        <Row k="Latency" v={stats.latencyMs === null ? '—' : `${stats.latencyMs} ms`} />
+        <Row k="Packets TX / RX" v={`${stats.tx} / ${stats.rx}`} />
+        <Row k="Motion events" v={String(diag.motionEvents)} />
+      </Section>
+
+      <Section title="Motion energy">
+        <div style={{ height: 9, background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 2, overflow: 'hidden' }}>
           <div
             style={{
               width: `${motionEnergy * 100}%`,
               height: '100%',
-              background:
-                motionEnergy > 0.55 ? 'var(--danger)' : motionEnergy > 0.18 ? 'var(--warn)' : 'var(--ok)',
-              transition: 'width 90ms linear',
+              background: motionEnergy > 0.55 ? 'var(--danger)' : motionEnergy > 0.18 ? 'var(--warn)' : 'var(--ok)',
             }}
           />
         </div>
-        <div className="provenance" style={{ marginTop: 6 }}>
-          |a| − g averaged over 30 real samples · phone motion, not vehicle dynamics
+        <div className="provenance" style={{ marginTop: 5 }}>
+          {status.live ? '|a| − g over 30 real samples · phone motion' : 'No sensor events'}
         </div>
-      </div>
+      </Section>
 
-      {/* telemetry */}
-      <div className="panel" style={{ padding: 11 }}>
-        <div className="label" style={{ fontSize: 9 }}>
-          Acceleration · m/s²
-        </div>
-        <Triple a={readout.accel.x} b={readout.accel.y} c={readout.accel.z} />
+      <Section title="Acceleration · m/s²">
+        <Row k="X / Y / Z" v={`${readout.accel.x.toFixed(2)} ${readout.accel.y.toFixed(2)} ${readout.accel.z.toFixed(2)}`} />
         <SensorGraph recent={recent} pick={(s) => s.accel.x} label="ACC X" color="var(--drishti)" scale={20} />
-        <SensorGraph recent={recent} pick={(s) => s.accel.y} label="ACC Y" color="var(--drishti)" scale={20} />
         <SensorGraph recent={recent} pick={(s) => s.accel.z} label="ACC Z" color="var(--drishti)" scale={20} />
+      </Section>
 
-        <div className="label" style={{ fontSize: 9, marginTop: 10 }}>
-          Rotation rate · °/s
-        </div>
-        <Triple a={readout.gyro.x} b={readout.gyro.y} c={readout.gyro.z} />
-        <SensorGraph recent={recent} pick={(s) => s.gyro.x} label="GYRO X" color="var(--accent)" scale={200} />
-        <SensorGraph recent={recent} pick={(s) => s.gyro.y} label="GYRO Y" color="var(--accent)" scale={200} />
+      <Section title="Rotation rate · °/s">
+        <Row k="X / Y / Z" v={`${readout.gyro.x.toFixed(2)} ${readout.gyro.y.toFixed(2)} ${readout.gyro.z.toFixed(2)}`} />
         <SensorGraph recent={recent} pick={(s) => s.gyro.z} label="GYRO Z" color="var(--accent)" scale={200} />
+      </Section>
 
-        <div className="provenance" style={{ marginTop: 8 }}>
-          Raw values from DeviceMotionEvent · unmodified
-        </div>
-      </div>
+      <div className="provenance">Raw DeviceMotionEvent values · REAL hardware · unmodified</div>
+    </div>
+  )
+}
 
-      {/* commands */}
-      <div className="panel" style={{ padding: 11 }}>
-        <div className="label" style={{ fontSize: 9 }}>
-          Mission command
-        </div>
-        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
+const COMMANDS: { cmd: CommandName; label: string; tone?: 'danger' | 'warn' }[] = [
+  { cmd: 'START_MISSION', label: 'Start mission' },
+  { cmd: 'GNSS_DENIED', label: 'GNSS blackout', tone: 'danger' },
+  { cmd: 'GNSS_SPOOFED', label: 'GNSS spoof', tone: 'danger' },
+  { cmd: 'POTHOLE', label: 'Pothole', tone: 'warn' },
+  { cmd: 'PHONE_SLIP', label: 'Phone slip', tone: 'warn' },
+  { cmd: 'GNSS_RECOVERY', label: 'GNSS recovery' },
+  { cmd: 'RESET_MISSION', label: 'Reset mission' },
+]
+
+function MissionTab({
+  m,
+  onCommand,
+  linked,
+}: {
+  m: MissionStateMessage | null
+  onCommand: (c: CommandName) => void
+  linked: boolean
+}) {
+  return (
+    <div style={{ padding: 12, overflowY: 'auto', height: '100%' }}>
+      <Section title="Mission">
+        <Row k="Phase" v={m?.phase ?? '—'} color="var(--accent)" />
+        <Row k="Mission time" v={m ? `T+${m.t.toFixed(1)} s` : '—'} />
+        <Row k="Distance" v={m ? `${m.s.toFixed(0)} m` : '—'} />
+        <Row k="Blackout" v={m ? `${m.blackoutElapsed.toFixed(1)} s · ${m.blackoutDistance.toFixed(0)} m` : '—'} />
+        <Row k="Rejected fixes" v={m ? String(m.rejectedCount) : '—'} color="var(--danger)" />
+        <Row k="Recovery" v={m?.recoveryTime != null ? `${m.recoveryTime.toFixed(2)} s` : '—'} />
+      </Section>
+
+      <Section title="Command">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
           {COMMANDS.map((c) => (
             <button
               key={c.cmd}
-              onClick={() => fire(c.cmd)}
-              disabled={!linkOk}
+              onClick={() => onCommand(c.cmd)}
+              disabled={!linked}
               style={{
                 width: '100%',
                 minHeight: 46,
                 background: 'var(--bg-raised)',
-                border: `1px solid ${
-                  c.tone === 'danger'
-                    ? 'var(--danger)'
-                    : c.tone === 'warn'
-                      ? 'var(--warn)'
-                      : 'var(--border-hot)'
-                }`,
+                border: `1px solid ${c.tone === 'danger' ? 'var(--danger)' : c.tone === 'warn' ? 'var(--warn)' : 'var(--border-hot)'}`,
                 borderRadius: 3,
-                color:
-                  c.tone === 'danger'
-                    ? 'var(--danger)'
-                    : c.tone === 'warn'
-                      ? 'var(--warn)'
-                      : 'var(--accent)',
+                color: c.tone === 'danger' ? 'var(--danger)' : c.tone === 'warn' ? 'var(--warn)' : 'var(--accent)',
                 fontSize: 12.5,
                 letterSpacing: '0.09em',
                 textTransform: 'uppercase',
                 fontWeight: 600,
-                opacity: linkOk ? 1 : 0.4,
+                opacity: linked ? 1 : 0.4,
               }}
             >
               {c.label}
             </button>
           ))}
         </div>
-        {lastCommand && (
-          <div className="mono" style={{ marginTop: 9, fontSize: 10.5 }}>
-            <span style={{ color: 'var(--text-lo)' }}>SENT </span>
-            <span>{lastCommand.cmd}</span>{' '}
-            <span style={{ color: lastCommand.acked ? 'var(--ok)' : 'var(--warn)' }}>
-              {lastCommand.acked ? '✓ ACK' : '… awaiting ack'}
-            </span>
-          </div>
-        )}
         <div className="provenance" style={{ marginTop: 8 }}>
-          Commands are real · the scenario they trigger is simulated
+          Commands are REAL · the scenario they trigger is SIMULATED
         </div>
-      </div>
-
-      <div className="provenance" style={{ textAlign: 'center', paddingBottom: 6 }}>
-        DRISHTI DEMONSTRATION BUILD · Real phone sensors, simulated navigation ·
-        No measured benchmark claims
-      </div>
-    </div>
-  )
-}
-
-function Stat({ label, value, ok }: { label: string; value: string; ok?: boolean }) {
-  return (
-    <div>
-      <div className="label" style={{ fontSize: 7.5 }}>
-        {label}
-      </div>
-      <div
-        className="mono"
-        style={{ fontSize: 11, color: ok === false ? 'var(--danger)' : 'var(--text-hi)' }}
-      >
-        {value}
-      </div>
-    </div>
-  )
-}
-
-function Big({
-  label,
-  value,
-  tone,
-}: {
-  label: string
-  value: string
-  tone?: 'ok' | 'danger' | 'accent'
-}) {
-  const color =
-    tone === 'danger' ? 'var(--danger)' : tone === 'accent' ? 'var(--accent)' : tone === 'ok' ? 'var(--ok)' : 'var(--text-hi)'
-  return (
-    <div style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 3, padding: '6px 8px' }}>
-      <div className="label" style={{ fontSize: 7.5 }}>
-        {label}
-      </div>
-      <div className="mono" style={{ fontSize: 15, color }}>
-        {value}
-      </div>
-    </div>
-  )
-}
-
-function Triple({ a, b, c }: { a: number; b: number; c: number }) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, margin: '6px 0 8px' }}>
-      {[
-        ['X', a],
-        ['Y', b],
-        ['Z', c],
-      ].map(([k, v]) => (
-        <div key={k as string}>
-          <span className="label" style={{ fontSize: 7.5 }}>
-            {k as string}
-          </span>
-          <div className="mono" style={{ fontSize: 14 }}>
-            {(v as number) >= 0 ? '+' : ''}
-            {(v as number).toFixed(3)}
-          </div>
-        </div>
-      ))}
+      </Section>
     </div>
   )
 }
@@ -433,13 +453,6 @@ function PermissionGate({
   linkState: string
 }) {
   const [taps, setTaps] = useState(0)
-  // Read after mount: window.isSecureContext does not exist during SSR, and
-  // rendering it directly makes the server emit "no" where the client emits
-  // "yes", which React reports as a hydration mismatch.
-  const [secure, setSecure] = useState<boolean | null>(null)
-  useEffect(() => setSecure(window.isSecureContext), [])
-
-  const blocked = status.permission === 'insecure' || status.permission === 'unsupported'
   return (
     <div
       style={{
@@ -455,7 +468,7 @@ function PermissionGate({
       <div>
         <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '0.16em' }}>DRISHTI</div>
         <div className="label" style={{ fontSize: 11 }}>
-          Field unit · SIH26168
+          Field navigation · SIH26168
         </div>
       </div>
 
@@ -464,8 +477,8 @@ function PermissionGate({
           Motion sensor access
         </div>
         <p style={{ fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-mid)', marginTop: 9 }}>
-          This demonstration streams your phone&apos;s real accelerometer, gyroscope and
-          orientation to Mission Control over a local WebSocket. Nothing leaves your
+          This field unit streams your phone&apos;s real accelerometer, gyroscope and
+          orientation to Mission Control over your local network. Nothing leaves the
           network and nothing is recorded.
         </p>
 
@@ -479,27 +492,12 @@ function PermissionGate({
               background: 'rgba(239,68,68,0.07)',
             }}
           >
-            <div className="label" style={{ fontSize: 9, color: 'var(--danger)' }}>
-              {status.permission === 'insecure' ? 'Insecure context' : 'Sensors unavailable'}
-            </div>
-            <p style={{ fontSize: 11.5, lineHeight: 1.55, color: 'var(--text-mid)', margin: '5px 0 0' }}>
+            <p style={{ fontSize: 11.5, lineHeight: 1.55, color: 'var(--text-mid)', margin: 0 }}>
               {status.reason}
             </p>
-            {status.permission === 'insecure' && (
-              <p style={{ fontSize: 11, lineHeight: 1.55, color: 'var(--text-lo)', margin: '8px 0 0' }}>
-                Fix: open this page over <b>https</b> (run <span className="mono">npm run cert</span> on
-                the laptop, then accept the certificate warning), or allow this exact origin
-                in <span className="mono">chrome://flags/#unsafely-treat-insecure-origin-as-secure</span>.
-              </p>
-            )}
           </div>
         )}
 
-        {/*
-          Always rendered. Hiding it when the context looks non-secure made a
-          failed check indistinguishable from a dead button, which is exactly
-          the confusion this screen exists to prevent.
-        */}
         <button
           onPointerDown={() => setTaps((n) => n + 1)}
           onClick={onEnable}
@@ -519,86 +517,36 @@ function PermissionGate({
             touchAction: 'manipulation',
           }}
         >
-          {status.permission === 'denied' || taps > 0
-            ? 'Retry sensor access'
-            : 'Enable sensor access'}
+          {taps > 0 ? 'Retry sensor access' : 'Start navigation'}
         </button>
 
         {taps > 0 && (
           <div className="mono" style={{ marginTop: 7, fontSize: 10.5, color: 'var(--ok)' }}>
-            ✓ Button registered {taps} tap{taps === 1 ? '' : 's'} — the control works
+            ✓ Button registered {taps} tap{taps === 1 ? '' : 's'}
           </div>
         )}
 
-        <div
-          style={{
-            marginTop: 14,
-            paddingTop: 11,
-            borderTop: '1px solid var(--border)',
-          }}
-        >
+        <div style={{ marginTop: 14, paddingTop: 11, borderTop: '1px solid var(--border)' }}>
           <div className="label" style={{ fontSize: 9 }}>
             Diagnostics — read this out if it does not work
           </div>
-          <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <D k="Protocol" v={diag.protocol || '…'} bad={diag.protocol === 'http:'} />
-            <D k="Host" v={diag.host || '…'} />
-            <D
+          <div style={{ marginTop: 7 }}>
+            <Row k="Protocol" v={diag.protocol || '…'} color={diag.protocol === 'http:' ? 'var(--danger)' : undefined} />
+            <Row k="Host" v={diag.host || '…'} />
+            <Row
               k="Secure context"
               v={diag.isSecureContext === null ? '…' : diag.isSecureContext ? 'YES' : 'NO'}
-              bad={diag.isSecureContext === false}
+              color={diag.isSecureContext === false ? 'var(--danger)' : 'var(--ok)'}
             />
-            <D k="DeviceMotionEvent" v={diag.hasDeviceMotion ? 'present' : 'MISSING'} bad={!diag.hasDeviceMotion} />
-            <D k="DeviceOrientationEvent" v={diag.hasDeviceOrientation ? 'present' : 'MISSING'} bad={!diag.hasDeviceOrientation} />
-            <D k="Needs permission call" v={diag.needsPermissionCall ? 'yes (iOS)' : 'no (Android)'} />
-            <D
-              k="Motion events seen"
-              v={String(diag.motionEvents)}
-              bad={diag.motionEvents === 0}
-              good={diag.motionEvents > 0}
-            />
-            <D
-              k="Orientation events"
-              v={String(diag.orientationEvents)}
-              bad={diag.orientationEvents === 0}
-              good={diag.orientationEvents > 0}
-            />
-            <D k="Last action" v={diag.lastAction} />
-            <D k="Link" v={linkState} good={linkState === 'CONNECTED'} />
+            <Row k="DeviceMotionEvent" v={diag.hasDeviceMotion ? 'present' : 'MISSING'} color={diag.hasDeviceMotion ? undefined : 'var(--danger)'} />
+            <Row k="Needs permission" v={diag.needsPermissionCall ? 'yes (iOS)' : 'no (Android)'} />
+            <Row k="Motion events" v={String(diag.motionEvents)} color={diag.motionEvents > 0 ? 'var(--ok)' : 'var(--danger)'} />
+            <Row k="Orientation events" v={String(diag.orientationEvents)} color={diag.orientationEvents > 0 ? 'var(--ok)' : 'var(--danger)'} />
+            <Row k="Last action" v={diag.lastAction} />
+            <Row k="Link" v={linkState} color={linkState === 'CONNECTED' ? 'var(--ok)' : undefined} />
           </div>
-
-          {diag.motionEvents > 0 && status.permission !== 'granted' && (
-            <div
-              className="mono"
-              style={{ marginTop: 9, fontSize: 10.5, color: 'var(--ok)', lineHeight: 1.5 }}
-            >
-              Sensors ARE delivering ({diag.motionEvents} events). Tap the button above to
-              start streaming.
-            </div>
-          )}
         </div>
       </div>
-    </div>
-  )
-}
-
-function D({ k, v, bad, good }: { k: string; v: string; bad?: boolean; good?: boolean }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-      <span className="label" style={{ fontSize: 8.5 }}>
-        {k}
-      </span>
-      <span
-        className="mono"
-        style={{
-          fontSize: 10,
-          textAlign: 'right',
-          wordBreak: 'break-all',
-          color: bad ? 'var(--danger)' : good ? 'var(--ok)' : 'var(--text-hi)',
-        }}
-      >
-        {v}
-      </span>
     </div>
   )
 }
